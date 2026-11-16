@@ -40,7 +40,6 @@ function convertSalary(amount, fromCurrency, toCurrency, rates) {
   return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
 }
 
-// Advanced N-Gram Extractor with Generic Unigram Suppression & Bigram Priority
 function extractResumeKeywords(cvText) {
   if (!cvText) return [\x27Executive\x27];
 
@@ -61,7 +60,6 @@ function extractResumeKeywords(cvText) {
     \x27lumpur\x27,\x27selangor\x27,\x27singapore\x27,\x27remote\x27,\x27hybrid\x27,\x27full\x27,\x27time\x27,\x27part\x27,\x27sdn\x27,\x27bhd\x27
   ]);
 
-  // Generic corporate words that must NEVER act as standalone search terms
   const genericUnigrams = new Set([
     \x27management\x27, \x27manager\x27, \x27business\x27, \x27analyst\x27, \x27operations\x27,
     \x27support\x27, \x27process\x27, \x27system\x27, \x27systems\x27, \x27data\x27, \x27report\x27,
@@ -81,13 +79,14 @@ function extractResumeKeywords(cvText) {
 
   const phraseCounts = new Map();
 
-  // 1. Prioritize Bigrams (2-word technical/domain phrases) with high weight
   for (let i = 0; i < words.length - 1; i++) {
     const bigram = words[i] + \x27 \x27 + words[i+1];
-    phraseCounts.set(bigram, (phraseCounts.get(bigram) || 0) + 5);
+    // Heavily reward domain-specific bigrams
+    const isGenericBigram = genericUnigrams.has(words[i]) || genericUnigrams.has(words[i+1]);
+    const weight = isGenericBigram ? 1 : 6;
+    phraseCounts.set(bigram, (phraseCounts.get(bigram) || 0) + weight);
   }
 
-  // 2. Count unigrams ONLY if they are specific technical/domain terms (not generic corporate filler)
   for (const w of words) {
     if (!genericUnigrams.has(w)) {
       phraseCounts.set(w, (phraseCounts.get(w) || 0) + 1);
@@ -286,6 +285,27 @@ function containsTerm(text, term) {
 function scoreLiveJobAgainstCV(job, resumeKeywords) {
   if (!resumeKeywords || resumeKeywords.length === 0) return { matchScore: null, matchedSkills: [] };
   const haystack = (job.title + \x27 \x27 + (job.snippet || job.skills || \x27\x27) + \x27 \x27 + (job.company || \x27\x27)).toLowerCase();
+  
+  const genericUnigrams = new Set([
+    \x27management\x27, \x27manager\x27, \x27business\x27, \x27analyst\x27, \x27operations\x27,
+    \x27support\x27, \x27process\x27, \x27system\x27, \x27systems\x27, \x27data\x27, \x27report\x27,
+    \x27reports\x27, \x27reporting\x27, \x27client\x27, \x27clients\x27, \x27customer\x27,
+    \x27customers\x27, \x27team\x27, \x27teams\x27, \x27project\x27, \x27projects\x27,
+    \x27service\x27, \x27services\x27, \x27solution\x27, \x27solutions\x27, \x27work\x27,
+    \x27working\x27, \x27worked\x27, \x27experience\x27, \x27experiences\x27, \x27years\x27,
+    \x27year\x27, \x27month\x27, \x27months\x27, \x27role\x27, \x27roles\x27, \x27key\x27,
+    \x27high\x27, \x27new\x27, \x27based\x27, \x27across\x27, \x27within\x27, \x27including\x27,
+    \x27using\x27, \x27used\x27, \x27lead\x27, \x27senior\x27, \x27specialist\x27
+  ]);
+
+  const highSignalKeywords = resumeKeywords.filter((kw) => !genericUnigrams.has(kw) && kw.length > 3);
+  const highSignalMatched = highSignalKeywords.filter((kw) => containsTerm(haystack, kw));
+
+  // STRICT RULE: If high-signal domain keywords exist, at least one MUST match!
+  if (highSignalKeywords.length > 0 && highSignalMatched.length === 0) {
+    return { matchScore: 0, matchedSkills: [] };
+  }
+
   const matched = resumeKeywords.filter((kw) => containsTerm(haystack, kw));
   if (matched.length === 0) return { matchScore: 0, matchedSkills: [] };
 
@@ -323,7 +343,7 @@ async function filter(location = \x27\x27, minSalary = 0, maxSalary = 10000000, 
     }
 
     const { matchScore, matchedSkills } = scoreLiveJobAgainstCV(job, resumeKeywords);
-    if (matchedSkills.length === 0) continue;
+    if (matchScore === 0 || matchedSkills.length === 0) continue;
 
     results.push({
       ...job,
