@@ -15,10 +15,7 @@ router.post('/parse-resume', upload.single('resume'), async (req, res) => {
       return res.status(400).json({ error: 'No resume file uploaded.' });
     }
     const text = await parseResume(req.file);
-    res.json({
-      fileName: req.file.originalname,
-      text: text.trim(),
-    });
+    res.json({ fileName: req.file.originalname, text: text.trim() });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Failed to parse resume.' });
   }
@@ -31,6 +28,7 @@ router.get('/', async (req, res) => {
     maxSalary = 10000000,
     cv = '',
     currency = 'MYR',
+    datePosted = '7d',
   } = req.query;
 
   const min = Number(minSalary);
@@ -39,7 +37,7 @@ router.get('/', async (req, res) => {
     return res.status(400).json({ error: 'minSalary > maxSalary' });
   }
 
-  const jobs = await filter.filter(location, min, max, cv, currency);
+  const jobs = await filter.filter(location, min, max, cv, currency, datePosted);
   res.json(jobs);
 });
 
