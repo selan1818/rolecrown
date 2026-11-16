@@ -1,6 +1,3 @@
-const fs = require(\x27fs\x27);
-const path = require(\x27path\x27);
-
 const FALLBACK_RATES = { USD: 1.0, MYR: 4.45, SGD: 1.34, EUR: 0.92, GBP: 0.79 };
 const FX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 let cachedRates = null;
@@ -12,151 +9,203 @@ const joobleCache = new Map();
 async function getExchangeRates() {
   const now = Date.now();
   if (cachedRates && now - lastFetchedAt < FX_CACHE_TTL_MS) {
-    return { rates: cachedRates, source: \x2724h-cache\x27 };
+    return { rates: cachedRates, source: '24h-cache' };
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch(
-      \x27https://api.frankfurter.app/latest?from=USD&to=MYR,SGD,EUR,GBP\x27,
+      'https://api.frankfurter.app/latest?from=USD&to=MYR,SGD,EUR,GBP',
       { signal: controller.signal }
     );
     clearTimeout(timeout);
-    if (!res.ok) throw new Error(\x27FX HTTP \x27 + res.status);
+    if (!res.ok) throw new Error('FX HTTP ' + res.status);
     const data = await res.json();
     cachedRates = { ...FALLBACK_RATES, ...(data.rates || {}), USD: 1.0 };
     lastFetchedAt = now;
-    return { rates: cachedRates, source: \x27live-api\x27 };
+    return { rates: cachedRates, source: 'live-api' };
   } catch {
     clearTimeout(timeout);
-    return { rates: cachedRates || FALLBACK_RATES, source: cachedRates ? \x27stale-cache\x27 : \x27fallback\x27 };
+    return { rates: cachedRates || FALLBACK_RATES, source: cachedRates ? 'stale-cache' : 'fallback' };
   }
 }
 
 function convertSalary(amount, fromCurrency, toCurrency, rates) {
   if (!amount || amount <= 0) return 0;
-  const from = (fromCurrency || \x27USD\x27).toUpperCase();
-  const to = (toCurrency || \x27MYR\x27).toUpperCase();
+  const from = (fromCurrency || 'USD').toUpperCase();
+  const to = (toCurrency || 'MYR').toUpperCase();
   return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
 }
 
+const STOP_WORDS = new Set([
+  'the','and','for','with','from','that','this','have','has','had','are','was','were',
+  'been','being','will','would','could','should','can','may','might','must','into',
+  'over','under','above','below','between','through','during','before','after','each',
+  'other','such','only','same','than','too','very','just','also','well','work','working',
+  'worked','experience','experiences','years','year','month','months','present','current',
+  'currently','role','roles','team','teams','education','university','college','degree',
+  'bachelor','master','diploma','certificate','certified','certification','email','phone',
+  'address','linkedin','github','references','available','upon','request','strong',
+  'excellent','good','ability','using','used','including','across','within','based',
+  'new','high','key','company','organization','client','clients','customer','customers',
+  'stakeholders','january','february','march','april','june','july','august','september',
+  'october','november','december','malaysia','kuala','lumpur','selangor','singapore',
+  'remote','hybrid','full','time','part','sdn','bhd','berhad','puchong','klang','petronas',
+  'allianz','standard','chartered','ibm','aig','upm','msu','hons','cgpa','awarded',
+  'distinction','seeking','proven','seasoned','results','driven','decade','global',
+  'internal','external','various','multiple','daily','weekly','monthly','biweekly',
+  'ongoing','clear','concise','documented','effective','effectively','closely','smoothly',
+  'properly','strict','strictly','complex','large','scale','level','tier','first','second'
+]);
+
+const GENERIC_UNIGRAMS = new Set([
+  'management','manager','managers','managing','managed','business','analyst','analysts',
+  'operations','operational','support','supporting','supported','process','processes',
+  'system','systems','data','report','reports','reporting','project','projects',
+  'service','services','solution','solutions','lead','leading','leader','leadership',
+  'senior','specialist','specialists','associate','executive','officer','director',
+  'head','supervisor','supervising','coordinator','consultant','consulting','advisor',
+  'development','analysis','analytical','review','reviews','training','coaching',
+  'monitoring','tracking','planning','delivery','strategy','strategic','initiatives',
+  'performance','productivity','quality','control','excellence','improvement',
+  'improvements','implementation','implementations','issues','problem','problems',
+  'solving','attention','detail','skills','competencies','proficiency','technical',
+  'core','summary','professional','history','background','environment','environments',
+  'policies','policy','guidelines','procedures','requirements','standards','framework',
+  'model','tools','platforms','software','hardware','applications','application',
+  'enterprise','regional','center','centre','floor','queue','queues','shift','shifts',
+  'vendors','vendor','stakeholder','owners','owner','agreements','budget','budgets',
+  'cost','fixed','independent','founded','helped','built','took','ownership',
+  'escalation','escalated','timelines','timeline','set','setting','step','stepped',
+  'run','running','led','directed','aligning','priorities','conducted','conduct',
+  'spearhead','oversee','assign','cases','workflow','validate','forms','serve',
+  'subject','matter','expert','sme','develop','targeted','programs','hires','existing',
+  'members','enhancing','overall','capability','liaise','resolve','drive','metrics',
+  'effort','counts','optimize','resource','allocation','tasks','perform','comprehensive',
+  'backgrounds','source','wealth','funds','public','proprietary','research','entity',
+  'structures','hierarchies','ultimate','beneficial','identify','potential','red','flags',
+  'junior','prepare','summarizing','findings','recommending','ratings','mitigation',
+  'strategies','office','suite','digital','literacy','thinking','privacy','due','anti',
+  'money','counter','enhanced','major','root','cause','periodic','bank','banking'
+]);
+
 function extractResumeKeywords(cvText) {
-  if (!cvText) return [\x27Executive\x27];
+  if (!cvText) return ['Executive'];
 
-  const stopWords = new Set([
-    \x27the\x27,\x27and\x27,\x27for\x27,\x27with\x27,\x27from\x27,\x27that\x27,\x27this\x27,\x27have\x27,\x27has\x27,\x27had\x27,\x27are\x27,\x27was\x27,\x27were\x27,
-    \x27been\x27,\x27being\x27,\x27will\x27,\x27would\x27,\x27could\x27,\x27should\x27,\x27can\x27,\x27may\x27,\x27might\x27,\x27must\x27,\x27into\x27,
-    \x27over\x27,\x27under\x27,\x27above\x27,\x27below\x27,\x27between\x27,\x27through\x27,\x27during\x27,\x27before\x27,\x27after\x27,\x27each\x27,
-    \x27other\x27,\x27such\x27,\x27only\x27,\x27same\x27,\x27than\x27,\x27too\x27,\x27very\x27,\x27just\x27,\x27also\x27,\x27well\x27,\x27work\x27,\x27working\x27,
-    \x27worked\x27,\x27experience\x27,\x27experiences\x27,\x27years\x27,\x27year\x27,\x27month\x27,\x27months\x27,\x27present\x27,\x27current\x27,
-    \x27currently\x27,\x27role\x27,\x27roles\x27,\x27team\x27,\x27teams\x27,\x27project\x27,\x27projects\x27,\x27education\x27,\x27university\x27,
-    \x27college\x27,\x27degree\x27,\x27bachelor\x27,\x27master\x27,\x27diploma\x27,\x27certificate\x27,\x27certified\x27,\x27certification\x27,
-    \x27email\x27,\x27phone\x27,\x27address\x27,\x27linkedin\x27,\x27github\x27,\x27references\x27,\x27available\x27,\x27upon\x27,\x27request\x27,
-    \x27strong\x27,\x27excellent\x27,\x27good\x27,\x27ability\x27,\x27using\x27,\x27used\x27,\x27including\x27,\x27across\x27,\x27within\x27,
-    \x27based\x27,\x27new\x27,\x27high\x27,\x27key\x27,\x27company\x27,\x27organization\x27,\x27services\x27,\x27service\x27,\x27solutions\x27,
-    \x27support\x27,\x27process\x27,\x27processes\x27,\x27system\x27,\x27systems\x27,\x27data\x27,\x27report\x27,\x27reports\x27,\x27reporting\x27,
-    \x27client\x27,\x27clients\x27,\x27customer\x27,\x27customers\x27,\x27stakeholders\x27,\x27january\x27,\x27february\x27,\x27march\x27,\x27april\x27,
-    \x27june\x27,\x27july\x27,\x27august\x27,\x27september\x27,\x27october\x27,\x27november\x27,\x27december\x27,\x27malaysia\x27,\x27kuala\x27,
-    \x27lumpur\x27,\x27selangor\x27,\x27singapore\x27,\x27remote\x27,\x27hybrid\x27,\x27full\x27,\x27time\x27,\x27part\x27,\x27sdn\x27,\x27bhd\x27
-  ]);
+  const clauses = cvText.toLowerCase().split(/[,.;:()\[\]\n\r•·|\/\\–—-]+/);
+  const bigramCounts = new Map();
+  const unigramCounts = new Map();
 
-  const genericUnigrams = new Set([
-    \x27management\x27, \x27manager\x27, \x27business\x27, \x27analyst\x27, \x27operations\x27,
-    \x27support\x27, \x27process\x27, \x27system\x27, \x27systems\x27, \x27data\x27, \x27report\x27,
-    \x27reports\x27, \x27reporting\x27, \x27client\x27, \x27clients\x27, \x27customer\x27,
-    \x27customers\x27, \x27team\x27, \x27teams\x27, \x27project\x27, \x27projects\x27,
-    \x27service\x27, \x27services\x27, \x27solution\x27, \x27solutions\x27, \x27work\x27,
-    \x27working\x27, \x27worked\x27, \x27experience\x27, \x27experiences\x27, \x27years\x27,
-    \x27year\x27, \x27month\x27, \x27months\x27, \x27role\x27, \x27roles\x27, \x27key\x27,
-    \x27high\x27, \x27new\x27, \x27based\x27, \x27across\x27, \x27within\x27, \x27including\x27,
-    \x27using\x27, \x27used\x27, \x27lead\x27, \x27senior\x27, \x27specialist\x27
-  ]);
+  for (const clause of clauses) {
+    const tokens = clause
+      .replace(/[^a-z0-9+#\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !/^\d+$/.test(w));
 
-  const cleanText = cvText.toLowerCase().replace(/[^a-z0-9+#.\s-]/g, \x27 \x27);
-  const words = cleanText
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w));
-
-  const phraseCounts = new Map();
-
-  for (let i = 0; i < words.length - 1; i++) {
-    const bigram = words[i] + \x27 \x27 + words[i+1];
-    const isGenericBigram = genericUnigrams.has(words[i]) || genericUnigrams.has(words[i+1]);
-    const weight = isGenericBigram ? 1 : 6;
-    phraseCounts.set(bigram, (phraseCounts.get(bigram) || 0) + weight);
-  }
-
-  for (const w of words) {
-    if (!genericUnigrams.has(w)) {
-      phraseCounts.set(w, (phraseCounts.get(w) || 0) + 1);
+    for (let i = 0; i < tokens.length; i++) {
+      const w = tokens[i];
+      if (!STOP_WORDS.has(w) && !GENERIC_UNIGRAMS.has(w)) {
+        unigramCounts.set(w, (unigramCounts.get(w) || 0) + 1);
+      }
+      if (i < tokens.length - 1) {
+        const w1 = tokens[i];
+        const w2 = tokens[i + 1];
+        if (
+          w1 !== w2 &&
+          !STOP_WORDS.has(w1) &&
+          !STOP_WORDS.has(w2) &&
+          !(GENERIC_UNIGRAMS.has(w1) && GENERIC_UNIGRAMS.has(w2))
+        ) {
+          const bigram = w1 + ' ' + w2;
+          bigramCounts.set(bigram, (bigramCounts.get(bigram) || 0) + 1);
+        }
+      }
     }
   }
 
-  const sortedPhrases = [...phraseCounts.entries()]
+  const recurringBigrams = [...bigramCounts.entries()]
+    .filter(([, count]) => count >= 2)
     .sort((a, b) => b[1] - a[1])
-    .map(([phrase]) => phrase);
+    .map(([p]) => p);
 
-  return sortedPhrases.length > 0 ? sortedPhrases.slice(0, 3) : [\x27Executive\x27];
+  const allUnigrams = [...unigramCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const recurringUnigrams = allUnigrams.filter(([, count]) => count >= 2).map(([w]) => w);
+  const topUnigrams = recurringUnigrams.length >= 3 ? recurringUnigrams : allUnigrams.map(([w]) => w);
+
+  const combined = [];
+  if (recurringBigrams[0]) combined.push(recurringBigrams[0]);
+  if (topUnigrams[0] && !combined.includes(topUnigrams[0])) combined.push(topUnigrams[0]);
+  if (recurringBigrams[1] && !combined.includes(recurringBigrams[1])) combined.push(recurringBigrams[1]);
+  if (topUnigrams[1] && !combined.includes(topUnigrams[1])) combined.push(topUnigrams[1]);
+
+  for (const u of topUnigrams.slice(2, 16)) {
+    if (!combined.includes(u)) combined.push(u);
+  }
+  for (const b of recurringBigrams.slice(2, 8)) {
+    if (!combined.includes(b)) combined.push(b);
+  }
+
+  return combined.length > 0 ? combined : ['Executive'];
 }
 
 function parseJoobleSalary(salaryStr, locationStr) {
-  if (!salaryStr || typeof salaryStr !== \x27string\x27) return { amount: 0, currency: \x27MYR\x27 };
+  if (!salaryStr || typeof salaryStr !== 'string') return { amount: 0, currency: 'MYR' };
   const lower = salaryStr.toLowerCase();
-  let currency = \x27USD\x27;
-  if (lower.includes(\x27rm\x27) || lower.includes(\x27myr\x27) || (locationStr || \x27\x27).toLowerCase().includes(\x27malaysia\x27)) currency = \x27MYR\x27;
-  else if (lower.includes(\x27s$\x27) || lower.includes(\x27sgd\x27) || (locationStr || \x27\x27).toLowerCase().includes(\x27singapore\x27)) currency = \x27SGD\x27;
-  else if (lower.includes(\x27€\x27) || lower.includes(\x27eur\x27)) currency = \x27EUR\x27;
-  else if (lower.includes(\x27£\x27) || lower.includes(\x27gbp\x27)) currency = \x27GBP\x27;
+  let currency = 'USD';
+  if (lower.includes('rm') || lower.includes('myr') || (locationStr || '').toLowerCase().includes('malaysia')) currency = 'MYR';
+  else if (lower.includes('s$') || lower.includes('sgd') || (locationStr || '').toLowerCase().includes('singapore')) currency = 'SGD';
+  else if (lower.includes('€') || lower.includes('eur')) currency = 'EUR';
+  else if (lower.includes('£') || lower.includes('gbp')) currency = 'GBP';
 
   const nums = salaryStr.match(/\d[\d,.]*/g);
   if (!nums || nums.length === 0) return { amount: 0, currency };
-  const parsedNums = nums.map((n) => Number(n.replace(/,/g, \x27\x27))).filter((n) => !isNaN(n) && n > 0);
+  const parsedNums = nums.map((n) => Number(n.replace(/,/g, ''))).filter((n) => !isNaN(n) && n > 0);
   if (parsedNums.length === 0) return { amount: 0, currency };
 
   let avg = parsedNums.reduce((a, b) => a + b, 0) / parsedNums.length;
-  if (lower.includes(\x27hour\x27) || lower.includes(\x27/hr\x27)) avg *= 160;
-  else if (lower.includes(\x27day\x27) || lower.includes(\x27/day\x27)) avg *= 22;
-  else if (lower.includes(\x27year\x27) || lower.includes(\x27annum\x27) || lower.includes(\x27/yr\x27) || avg > 45000) avg /= 12;
+  if (lower.includes('hour') || lower.includes('/hr')) avg *= 160;
+  else if (lower.includes('day') || lower.includes('/day')) avg *= 22;
+  else if (lower.includes('year') || lower.includes('annum') || lower.includes('/yr') || avg > 45000) avg /= 12;
 
   return { amount: Math.round(avg), currency };
 }
 
 function stripHtml(html) {
-  return (html || \x27\x27).replace(/<[^>]*>/g, \x27 \x27).replace(/&nbsp;/gi, \x27 \x27).replace(/&amp;/gi, \x27&\x27).replace(/\s+/g, \x27 \x27).trim();
+  return (html || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
 }
 
 function formatPostedAgo(updatedIso) {
-  if (!updatedIso) return \x27Recent\x27;
+  if (!updatedIso) return 'Recent';
   const ts = Date.parse(updatedIso);
-  if (isNaN(ts)) return \x27Recent\x27;
+  if (isNaN(ts)) return 'Recent';
   const diffHours = Math.max(1, Math.floor((Date.now() - ts) / (1000 * 60 * 60)));
-  if (diffHours < 24) return diffHours + \x27h ago\x27;
+  if (diffHours < 24) return diffHours + 'h ago';
   const diffDays = Math.floor(diffHours / 24);
-  return diffDays === 1 ? \x271d ago\x27 : diffDays + \x27d ago\x27;
+  return diffDays === 1 ? '1d ago' : diffDays + 'd ago';
 }
 
 async function resolveDirectApplyUrl(rawLink, title, company, location) {
-  const cleanQuery = encodeURIComponent(title + \x27 \x27 + (company !== \x27Verified Employer\x27 ? company : \x27\x27) + \x27 \x27 + location.trim());
-  const googleJobsFallback = \x27https://www.google.com/search?q=\x27 + cleanQuery + \x27+jobs&ibp=htl;jobs\x27;
+  const cleanQuery = encodeURIComponent(title + ' ' + (company !== 'Verified Employer' ? company : '') + ' ' + location.trim());
+  const googleJobsFallback = 'https://www.google.com/search?q=' + cleanQuery + '+jobs&ibp=htl;jobs';
 
-  if (!rawLink || rawLink === \x27#\x27) return { url: googleJobsFallback, isDirect: false };
-  if (!rawLink.includes(\x27jooble.org\x27)) return { url: rawLink, isDirect: true };
+  if (!rawLink || rawLink === '#') return { url: googleJobsFallback, isDirect: false };
+  if (!rawLink.includes('jooble.org')) return { url: rawLink, isDirect: true };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
   try {
     const res = await fetch(rawLink, {
-      method: \x27GET\x27,
-      redirect: \x27manual\x27,
+      method: 'GET',
+      redirect: 'manual',
       headers: {
-        \x27User-Agent\x27: \x27Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\x27,
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       },
       signal: controller.signal,
     });
     clearTimeout(timeout);
 
-    const locHeader = res.headers.get(\x27location\x27);
-    if (locHeader && locHeader.startsWith(\x27http\x27) && !locHeader.includes(\x27jooble.org\x27)) {
+    const locHeader = res.headers.get('location');
+    if (locHeader && locHeader.startsWith('http') && !locHeader.includes('jooble.org')) {
       return { url: locHeader, isDirect: true };
     }
   } catch {
@@ -169,12 +218,12 @@ async function resolveDirectApplyUrl(rawLink, title, company, location) {
 function deduplicateJobs(jobs) {
   const seen = new Map();
   for (const job of jobs) {
-    const normTitle = (job.title || \x27\x27).toLowerCase().replace(/[^a-z0-9]/g, \x27\x27);
-    const normCompany = (job.company || \x27\x27)
+    const normTitle = (job.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normCompany = (job.company || '')
       .toLowerCase()
-      .replace(/\b(sdn|bhd|pte|ltd|inc|llc|corp|group|malaysia|singapore)\b/g, \x27\x27)
-      .replace(/[^a-z0-9]/g, \x27\x27);
-    const key = normTitle + \x27|\x27 + normCompany;
+      .replace(/\b(sdn|bhd|pte|ltd|inc|llc|corp|group|malaysia|singapore)\b/g, '')
+      .replace(/[^a-z0-9]/g, '');
+    const key = normTitle + '|' + normCompany;
     if (!seen.has(key)) seen.set(key, job);
     else if (seen.get(key).salary === 0 && job.salary > 0) seen.set(key, job);
   }
@@ -182,7 +231,7 @@ function deduplicateJobs(jobs) {
 }
 
 async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
-  const cacheKey = cleanKeywords.toLowerCase() + \x27|\x27 + cleanLocation.toLowerCase();
+  const cacheKey = cleanKeywords.toLowerCase() + '|' + cleanLocation.toLowerCase();
   const now = Date.now();
   const cached = joobleCache.get(cacheKey);
   if (cached && now - cached.timestamp < JOOBLE_CACHE_TTL_MS) return cached.jobs;
@@ -190,14 +239,14 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(\x27https://jooble.org/api/\x27 + apiKey, {
-      method: \x27POST\x27,
-      headers: { \x27Content-Type\x27: \x27application/json\x27 },
+    const res = await fetch('https://jooble.org/api/' + apiKey, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keywords: cleanKeywords, location: cleanLocation, page: 1 }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) throw new Error(\x27Jooble HTTP \x27 + res.status);
+    if (!res.ok) throw new Error('Jooble HTTP ' + res.status);
     const data = await res.json();
     const rawJobs = Array.isArray(data.jobs) ? data.jobs : [];
 
@@ -206,17 +255,17 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
         const cleanSnippet = stripHtml(item.snippet);
         const { amount, currency } = parseJoobleSalary(item.salary, item.location || cleanLocation);
         return {
-          id: item.id || \x27jooble-\x27 + idx + \x27-\x27 + Date.now(),
-          title: item.title || \x27Open Position\x27,
-          company: item.company || item.source || \x27Verified Employer\x27,
+          id: item.id || 'jooble-' + idx + '-' + Date.now(),
+          title: item.title || 'Open Position',
+          company: item.company || item.source || 'Verified Employer',
           location: item.location || cleanLocation,
           salary: amount,
-          rawSalaryText: item.salary || \x27\x27,
+          rawSalaryText: item.salary || '',
           currency,
           skills: cleanSnippet.slice(0, 180),
           snippet: cleanSnippet,
-          rawLink: item.link || \x27#\x27,
-          source: item.source || \x27Jooble Live\x27,
+          rawLink: item.link || '#',
+          source: item.source || 'Jooble Live',
           updatedAt: item.updated || null,
           postedAgo: formatPostedAgo(item.updated),
         };
@@ -226,7 +275,7 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
     const normalized = await Promise.all(
       dedupedRaw.map(async (job) => {
         const resolved = await resolveDirectApplyUrl(job.rawLink, job.title, job.company, job.location);
-        const linkedinSearchUrl = \x27https://www.linkedin.com/jobs/search/?keywords=\x27 + encodeURIComponent(job.title + \x27 \x27 + job.company) + \x27&location=\x27 + encodeURIComponent(job.location);
+        const linkedinSearchUrl = 'https://www.linkedin.com/jobs/search/?keywords=' + encodeURIComponent(job.title + ' ' + job.company) + '&location=' + encodeURIComponent(job.location);
         return {
           ...job,
           applyUrl: resolved.url,
@@ -241,7 +290,7 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
     return normalized;
   } catch (err) {
     clearTimeout(timeout);
-    console.error(\x27Jooble API error:\x27, err.message);
+    console.error('Jooble API error:', err.message);
     return null;
   }
 }
@@ -249,80 +298,67 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
 async function fetchLiveJoobleJobs(resumeKeywords, location) {
   const apiKey = process.env.JOOBLE_API_KEY;
   if (!apiKey) return [];
-  const cleanLocation = (location || \x27Malaysia\x27).trim();
+  const cleanLocation = (location || 'Malaysia').trim();
 
-  const q1 = resumeKeywords[0] || \x27Executive\x27;
-  const q2 = resumeKeywords[1] && resumeKeywords[1] !== q1 ? resumeKeywords[1] : null;
+  const queries = resumeKeywords.slice(0, 4);
+  if (queries.length === 0) queries.push('Executive');
 
-  const [res1, res2] = await Promise.all([
-    queryJoobleOnce(q1, cleanLocation, apiKey),
-    q2 ? queryJoobleOnce(q2, cleanLocation, apiKey) : Promise.resolve([]),
-  ]);
+  const responses = await Promise.all(
+    queries.map((q) => queryJoobleOnce(q, cleanLocation, apiKey))
+  );
 
-  const combined = [...(res1 || []), ...(res2 || [])];
+  const combined = responses.flatMap((r) => r || []);
   return combined.length > 0 ? deduplicateJobs(combined) : [];
 }
 
 function matchesDateFilter(job, datePosted) {
-  if (!datePosted || datePosted === \x27all\x27 || !job.updatedAt) return true;
+  if (!datePosted || datePosted === 'all' || !job.updatedAt) return true;
   const ts = Date.parse(job.updatedAt);
   if (isNaN(ts)) return true;
   const ageMs = Date.now() - ts;
   const dayMs = 24 * 60 * 60 * 1000;
-  if (datePosted === \x2724h\x27) return ageMs <= dayMs;
-  if (datePosted === \x277d\x27) return ageMs <= 7 * dayMs;
+  if (datePosted === '24h') return ageMs <= dayMs;
+  if (datePosted === '7d') return ageMs <= 7 * dayMs;
   return true;
 }
 
 function containsTerm(text, term) {
   const cleanTerm = term.trim().toLowerCase();
   if (!cleanTerm) return false;
-  const escaped = cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, \x27\\\\$$\x27);
-  return new RegExp(\x27(^|[^a-z0-9])\x27 + escaped + \x27($|[^a-z0-9])\x27, \x27i\x27).test(text);
+  const escaped = cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(^|[^a-z0-9])' + escaped + '($|[^a-z0-9])', 'i').test(text);
 }
 
 function scoreLiveJobAgainstCV(job, resumeKeywords) {
   if (!resumeKeywords || resumeKeywords.length === 0) return { matchScore: null, matchedSkills: [] };
-  const haystack = (job.title + \x27 \x27 + (job.snippet || job.skills || \x27\x27) + \x27 \x27 + (job.company || \x27\x27)).toLowerCase();
-  
-  const genericUnigrams = new Set([
-    \x27management\x27, \x27manager\x27, \x27business\x27, \x27analyst\x27, \x27operations\x27,
-    \x27support\x27, \x27process\x27, \x27system\x27, \x27systems\x27, \x27data\x27, \x27report\x27,
-    \x27reports\x27, \x27reporting\x27, \x27client\x27, \x27clients\x27, \x27customer\x27,
-    \x27customers\x27, \x27team\x27, \x27teams\x27, \x27project\x27, \x27projects\x27,
-    \x27service\x27, \x27services\x27, \x27solution\x27, \x27solutions\x27, \x27work\x27,
-    \x27working\x27, \x27worked\x27, \x27experience\x27, \x27experiences\x27, \x27years\x27,
-    \x27year\x27, \x27month\x27, \x27months\x27, \x27role\x27, \x27roles\x27, \x27key\x27,
-    \x27high\x27, \x27new\x27, \x27based\x27, \x27across\x27, \x27within\x27, \x27including\x27,
-    \x27using\x27, \x27used\x27, \x27lead\x27, \x27senior\x27, \x27specialist\x27
-  ]);
+  const haystack = (job.title + ' ' + (job.snippet || job.skills || '') + ' ' + (job.company || '')).toLowerCase();
 
-  const highSignalKeywords = resumeKeywords.filter((kw) => !genericUnigrams.has(kw) && kw.length > 3);
+  const highSignalKeywords = resumeKeywords.filter((kw) => !GENERIC_UNIGRAMS.has(kw) && kw.length >= 3);
   const highSignalMatched = highSignalKeywords.filter((kw) => containsTerm(haystack, kw));
 
   if (highSignalKeywords.length > 0 && highSignalMatched.length === 0) {
     return { matchScore: 0, matchedSkills: [] };
   }
 
-  const matched = resumeKeywords.filter((kw) => containsTerm(haystack, kw));
+  const matched = highSignalMatched.length > 0 ? highSignalMatched : resumeKeywords.filter((kw) => containsTerm(haystack, kw));
   if (matched.length === 0) return { matchScore: 0, matchedSkills: [] };
 
-  const ratio = matched.length / Math.min(resumeKeywords.length, 8);
-  const matchScore = Math.min(98, Math.max(50, Math.round(50 + ratio * 48)));
+  const ratio = matched.length / Math.min(highSignalKeywords.length || resumeKeywords.length, 6);
+  const matchScore = Math.min(98, Math.max(55, Math.round(55 + ratio * 43)));
   return { matchScore, matchedSkills: matched.slice(0, 6).map((s) => s.toUpperCase()) };
 }
 
-async function filter(location = \x27\x27, minSalary = 0, maxSalary = 10000000, cv = \x27\x27, currency = \x27MYR\x27, datePosted = \x277d\x27) {
+async function filter(location = '', minSalary = 0, maxSalary = 10000000, cv = '', currency = 'MYR', datePosted = '7d') {
   const { rates, source } = await getExchangeRates();
   const cvText = cv.trim();
-  const targetCurrency = (currency || \x27MYR\x27).toUpperCase();
+  const targetCurrency = (currency || 'MYR').toUpperCase();
   const resumeKeywords = extractResumeKeywords(cvText);
-  const searchLocation = location.trim() || \x27Malaysia\x27;
+  const searchLocation = location.trim() || 'Malaysia';
 
-  let jobs = await fetchLiveJoobleJobs(resumeKeywords, searchLocation);
+  const jobs = await fetchLiveJoobleJobs(resumeKeywords, searchLocation);
   let datedJobs = jobs.filter((job) => matchesDateFilter(job, datePosted));
   let broadenedFrom7d = false;
-  if (datePosted === \x277d\x27 && datedJobs.length === 0 && jobs.length > 0) {
+  if (datePosted === '7d' && datedJobs.length === 0 && jobs.length > 0) {
     datedJobs = jobs;
     broadenedFrom7d = true;
   }
