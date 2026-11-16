@@ -40,7 +40,7 @@ function convertSalary(amount, fromCurrency, toCurrency, rates) {
   return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
 }
 
-// Universal Dynamic N-Gram Extractor
+// Advanced N-Gram Extractor with Generic Unigram Suppression & Bigram Priority
 function extractResumeKeywords(cvText) {
   if (!cvText) return [\x27Executive\x27];
 
@@ -50,17 +50,28 @@ function extractResumeKeywords(cvText) {
     \x27over\x27,\x27under\x27,\x27above\x27,\x27below\x27,\x27between\x27,\x27through\x27,\x27during\x27,\x27before\x27,\x27after\x27,\x27each\x27,
     \x27other\x27,\x27such\x27,\x27only\x27,\x27same\x27,\x27than\x27,\x27too\x27,\x27very\x27,\x27just\x27,\x27also\x27,\x27well\x27,\x27work\x27,\x27working\x27,
     \x27worked\x27,\x27experience\x27,\x27experiences\x27,\x27years\x27,\x27year\x27,\x27month\x27,\x27months\x27,\x27present\x27,\x27current\x27,
-    \x27currently\x27,\x27role\x27,\x27roles\x27,\x27team\x27,\x27teams\x27,\x27project\x27,\x27projects\x27,\x27management\x27,\x27manager\x27,
-    \x27managing\x27,\x27managed\x27,\x27responsible\x27,\x27responsibilities\x27,\x27duties\x27,\x27skills\x27,\x27summary\x27,
-    \x27profile\x27,\x27education\x27,\x27university\x27,\x27college\x27,\x27degree\x27,\x27bachelor\x27,\x27master\x27,\x27diploma\x27,
-    \x27certificate\x27,\x27certified\x27,\x27certification\x27,\x27email\x27,\x27phone\x27,\x27address\x27,\x27linkedin\x27,\x27github\x27,
-    \x27references\x27,\x27available\x27,\x27upon\x27,\x27request\x27,\x27strong\x27,\x27excellent\x27,\x27good\x27,\x27ability\x27,\x27using\x27,
-    \x27used\x27,\x27including\x27,\x27across\x27,\x27within\x27,\x27based\x27,\x27new\x27,\x27high\x27,\x27key\x27,\x27company\x27,\x27organization\x27,
-    \x27business\x27,\x27services\x27,\x27service\x27,\x27solutions\x27,\x27support\x27,\x27operations\x27,\x27process\x27,\x27processes\x27,
-    \x27system\x27,\x27systems\x27,\x27data\x27,\x27report\x27,\x27reports\x27,\x27reporting\x27,\x27client\x27,\x27clients\x27,\x27customer\x27,
-    \x27customers\x27,\x27stakeholders\x27,\x27january\x27,\x27february\x27,\x27march\x27,\x27april\x27,\x27june\x27,\x27july\x27,\x27august\x27,
-    \x27september\x27,\x27october\x27,\x27november\x27,\x27december\x27,\x27malaysia\x27,\x27kuala\x27,\x27lumpur\x27,\x27selangor\x27,
-    \x27singapore\x27,\x27remote\x27,\x27hybrid\x27,\x27full\x27,\x27time\x27,\x27part\x27,\x27sdn\x27,\x27bhd\x27
+    \x27currently\x27,\x27role\x27,\x27roles\x27,\x27team\x27,\x27teams\x27,\x27project\x27,\x27projects\x27,\x27education\x27,\x27university\x27,
+    \x27college\x27,\x27degree\x27,\x27bachelor\x27,\x27master\x27,\x27diploma\x27,\x27certificate\x27,\x27certified\x27,\x27certification\x27,
+    \x27email\x27,\x27phone\x27,\x27address\x27,\x27linkedin\x27,\x27github\x27,\x27references\x27,\x27available\x27,\x27upon\x27,\x27request\x27,
+    \x27strong\x27,\x27excellent\x27,\x27good\x27,\x27ability\x27,\x27using\x27,\x27used\x27,\x27including\x27,\x27across\x27,\x27within\x27,
+    \x27based\x27,\x27new\x27,\x27high\x27,\x27key\x27,\x27company\x27,\x27organization\x27,\x27services\x27,\x27service\x27,\x27solutions\x27,
+    \x27support\x27,\x27process\x27,\x27processes\x27,\x27system\x27,\x27systems\x27,\x27data\x27,\x27report\x27,\x27reports\x27,\x27reporting\x27,
+    \x27client\x27,\x27clients\x27,\x27customer\x27,\x27customers\x27,\x27stakeholders\x27,\x27january\x27,\x27february\x27,\x27march\x27,\x27april\x27,
+    \x27june\x27,\x27july\x27,\x27august\x27,\x27september\x27,\x27october\x27,\x27november\x27,\x27december\x27,\x27malaysia\x27,\x27kuala\x27,
+    \x27lumpur\x27,\x27selangor\x27,\x27singapore\x27,\x27remote\x27,\x27hybrid\x27,\x27full\x27,\x27time\x27,\x27part\x27,\x27sdn\x27,\x27bhd\x27
+  ]);
+
+  // Generic corporate words that must NEVER act as standalone search terms
+  const genericUnigrams = new Set([
+    \x27management\x27, \x27manager\x27, \x27business\x27, \x27analyst\x27, \x27operations\x27,
+    \x27support\x27, \x27process\x27, \x27system\x27, \x27systems\x27, \x27data\x27, \x27report\x27,
+    \x27reports\x27, \x27reporting\x27, \x27client\x27, \x27clients\x27, \x27customer\x27,
+    \x27customers\x27, \x27team\x27, \x27teams\x27, \x27project\x27, \x27projects\x27,
+    \x27service\x27, \x27services\x27, \x27solution\x27, \x27solutions\x27, \x27work\x27,
+    \x27working\x27, \x27worked\x27, \x27experience\x27, \x27experiences\x27, \x27years\x27,
+    \x27year\x27, \x27month\x27, \x27months\x27, \x27role\x27, \x27roles\x27, \x27key\x27,
+    \x27high\x27, \x27new\x27, \x27based\x27, \x27across\x27, \x27within\x27, \x27including\x27,
+    \x27using\x27, \x27used\x27, \x27lead\x27, \x27senior\x27, \x27specialist\x27
   ]);
 
   const cleanText = cvText.toLowerCase().replace(/[^a-z0-9+#.\s-]/g, \x27 \x27);
@@ -69,20 +80,25 @@ function extractResumeKeywords(cvText) {
     .filter((w) => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w));
 
   const phraseCounts = new Map();
-  for (const w of words) {
-    phraseCounts.set(w, (phraseCounts.get(w) || 0) + 1);
-  }
 
+  // 1. Prioritize Bigrams (2-word technical/domain phrases) with high weight
   for (let i = 0; i < words.length - 1; i++) {
     const bigram = words[i] + \x27 \x27 + words[i+1];
-    phraseCounts.set(bigram, (phraseCounts.get(bigram) || 0) + 3);
+    phraseCounts.set(bigram, (phraseCounts.get(bigram) || 0) + 5);
+  }
+
+  // 2. Count unigrams ONLY if they are specific technical/domain terms (not generic corporate filler)
+  for (const w of words) {
+    if (!genericUnigrams.has(w)) {
+      phraseCounts.set(w, (phraseCounts.get(w) || 0) + 1);
+    }
   }
 
   const sortedPhrases = [...phraseCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([phrase]) => phrase);
 
-  return sortedPhrases.length > 0 ? sortedPhrases.slice(0, 4) : [\x27Executive\x27];
+  return sortedPhrases.length > 0 ? sortedPhrases.slice(0, 3) : [\x27Executive\x27];
 }
 
 function parseJoobleSalary(salaryStr, locationStr) {
@@ -307,7 +323,6 @@ async function filter(location = \x27\x27, minSalary = 0, maxSalary = 10000000, 
     }
 
     const { matchScore, matchedSkills } = scoreLiveJobAgainstCV(job, resumeKeywords);
-    // Exclude jobs that have zero keyword overlap with the CV so irrelevant jobs never appear
     if (matchedSkills.length === 0) continue;
 
     results.push({
