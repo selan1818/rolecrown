@@ -289,7 +289,7 @@ function App() {
                           Apply Now &rarr;
                         </a>
                         <a href={linkedinLink} target="_blank" rel="noreferrer noopener" style={{ display: 'inline-block', color: '#93c5fd', fontWeight: '600', fontSize: '13px', textDecoration: 'none' }}>
-                          View on LinkedIn &nearr;
+                          View on LinkedIn ↗
                         </a>
                       </div>
                     </div>
