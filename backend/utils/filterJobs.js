@@ -81,7 +81,6 @@ function extractResumeKeywords(cvText) {
 
   for (let i = 0; i < words.length - 1; i++) {
     const bigram = words[i] + \x27 \x27 + words[i+1];
-    // Heavily reward domain-specific bigrams
     const isGenericBigram = genericUnigrams.has(words[i]) || genericUnigrams.has(words[i+1]);
     const weight = isGenericBigram ? 1 : 6;
     phraseCounts.set(bigram, (phraseCounts.get(bigram) || 0) + weight);
@@ -301,7 +300,6 @@ function scoreLiveJobAgainstCV(job, resumeKeywords) {
   const highSignalKeywords = resumeKeywords.filter((kw) => !genericUnigrams.has(kw) && kw.length > 3);
   const highSignalMatched = highSignalKeywords.filter((kw) => containsTerm(haystack, kw));
 
-  // STRICT RULE: If high-signal domain keywords exist, at least one MUST match!
   if (highSignalKeywords.length > 0 && highSignalMatched.length === 0) {
     return { matchScore: 0, matchedSkills: [] };
   }
