@@ -1,11 +1,13 @@
-id,title,location,salary,currency,posted,skills,apply_url
-1,Senior Front-end Engineer,US,7500,USD,2026-11-15T00:00:00Z,"Java,React,Node,Apache",https://example.com/apply/1
-2,Major Incident and Problem Manager,Malaysia,12000,MYR,2026-11-16T00:00:00Z,"ITSM,Major Incident Management,Problem Management,ServiceNow,Dynatrace,ITIL,RCA",https://example.com/apply/2
-3,IT Operations and Service Delivery Lead,Malaysia,15000,MYR,2026-11-16T00:00:00Z,"IT Operations,Service Delivery,ITIL,SLA,KPI,Service Transition,ServiceNow",https://example.com/apply/3
-4,Senior Manager - Enterprise Applications,Malaysia,18000,MYR,2026-11-15T00:00:00Z,"Enterprise Applications,ITSM,MSSQL,Incident Management,RCA,SLA,Vendor Management",https://example.com/apply/4
-5,Release and Change Governance Manager,Singapore,10000,SGD,2026-11-16T00:00:00Z,"Release Management,Change Governance,ITIL,ServiceNow,QA,Deployment",https://example.com/apply/5
-6,ServiceNow and Observability Specialist,Remote,7300,USD,2026-11-15T00:00:00Z,"ServiceNow,Dynatrace,Prometheus,Grafana,Alert Automation,ITSM",https://example.com/apply/6
-7,Service Desk Operations Manager,Malaysia,10000,MYR,2026-11-14T00:00:00Z,"Service Desk,Desktop Support,Citrix,VPN,Cisco,RDP,SLA,KPI",https://example.com/apply/7
-8,Full Stack Node and React Developer,Remote,7000,USD,2026-11-16T00:00:00Z,"JavaScript,React,Node,Express,SQL,REST API",https://example.com/apply/8
-9,Cloud Infrastructure and Windows Engineer,UK,5400,GBP,2026-11-14T00:00:00Z,"Windows Server,MCITP,MCSA,Citrix,VPN,Cisco,Infrastructure",https://example.com/apply/9
-10,DevOps and Cloud Platform Engineer,Remote,8200,USD,2026-11-16T00:00:00Z,"DevOps,AWS,Kubernetes,Docker,Terraform,CI/CD,Prometheus,Grafana",https://example.com/apply/10
+id,title,company,location,salary,currency,skills,applyUrl
+1,AML / KYC Compliance Analyst,Maybank Group,Kuala Lumpur Malaysia,7500,MYR,"AML, KYC, Compliance, Financial Crime, Risk Assessment, SQL",https://www.jobstreet.com.my/aml-kyc-jobs
+2,Credit Risk Manager,CIMB Bank,Kuala Lumpur Malaysia,13500,MYR,"Credit Risk, Basel III, Financial Modeling, Corporate Banking, Portfolio Analysis",https://www.jobstreet.com.my/credit-risk-jobs
+3,Corporate Banking Relationship Manager,OCBC Bank,Singapore,9500,SGD,"Corporate Banking, Trade Finance, Treasury, Wealth Management, Client Acquisition",https://www.jobstreet.com.sg/corporate-banking-jobs
+4,Senior Civil & Structural Engineer,Gamuda Engineering,Selangor Malaysia,9200,MYR,"Civil Engineering, AutoCAD, Structural Design, Project Management, QA QC",https://www.jobstreet.com.my/civil-engineer-jobs
+5,Mechanical Maintenance Engineer,PETRONAS Chemicals,Johor Malaysia,10500,MYR,"Mechanical Engineering, Preventive Maintenance, SAP PM, Root Cause Analysis, HSE",https://www.jobstreet.com.my/mechanical-engineer-jobs
+6,Registered Staff Nurse (ICU / OT),Sunway Medical Centre,Selangor Malaysia,4800,MYR,"Registered Nurse, Patient Care, Clinical Assessment, BLS, ICU, Healthcare",https://www.jobstreet.com.my/nurse-jobs
+7,Clinical Pharmacist,KPJ Healthcare,Kuala Lumpur Malaysia,6200,MYR,"Pharmacist, Clinical Pharmacy, Medication Therapy, Inventory Control, Healthcare",https://www.jobstreet.com.my/pharmacist-jobs
+8,Supply Chain & Procurement Manager,DHL Supply Chain,Selangor Malaysia,11000,MYR,"Supply Chain, Procurement, Logistics, ERP, Vendor Management, Inventory",https://www.jobstreet.com.my/supply-chain-jobs
+9,Performance & Digital Marketing Lead,Shopee Malaysia,Kuala Lumpur Malaysia,8500,MYR,"Digital Marketing, SEO, SEM, Google Analytics, Paid Media, Brand Strategy",https://www.jobstreet.com.my/digital-marketing-jobs
+10,HR Business Partner,Unilever Malaysia,Kuala Lumpur Malaysia,9800,MYR,"Human Resources, Talent Acquisition, Employee Relations, Payroll, HRIS",https://www.jobstreet.com.my/hr-jobs
+11,Chartered Accountant / Financial Controller,PwC Malaysia,Kuala Lumpur Malaysia,12000,MYR,"Accounting, IFRS, Audit, Financial Reporting, Tax Compliance, Excel",https://www.jobstreet.com.my/accountant-jobs
+12,Product Manager – Enterprise Applications,TechCorp Asia,Kuala Lumpur Malaysia,14000,MYR,"Product Management, ServiceNow, Dynatrace, ITIL, Agile, Stakeholder Management",https://www.jobstreet.com.my/product-manager-jobs
