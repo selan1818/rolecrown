@@ -40,44 +40,6 @@ function convertSalary(amount, fromCurrency, toCurrency, rates) {
   return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
 }
 
-function parseCSVLine(line) {
-  const result = [];
-  let current = \x27\x27;
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === \x27"\x27) inQuotes = !inQuotes;
-    else if (char === \x27,\x27 && !inQuotes) {
-      result.push(current.trim());
-      current = \x27\x27;
-    } else current += char;
-  }
-  result.push(current.trim());
-  return result;
-}
-
-function loadFallbackCSVJobs() {
-  try {
-    const csvPath = path.join(__dirname, \x27..\x27, \x27data\x27, \x27jobs.csv\x27);
-    const raw = fs.readFileSync(csvPath, \x27utf-8\x27).trim();
-    const lines = raw.split(/\r?\n/);
-    const headers = parseCSVLine(lines[0]);
-    return lines.slice(1).map((line) => {
-      const values = parseCSVLine(line);
-      const job = {};
-      headers.forEach((h, idx) => { job[h] = values[idx] || \x27\x27; });
-      job.salary = Number(job.salary) || 0;
-      job.currency = (job.currency || \x27USD\x27).toUpperCase();
-      job.apply_url = job.applyUrl || job.apply_url || \x27#\x27;
-      job.postedAgo = \x27Recent\x27;
-      job.updatedAt = null;
-      return job;
-    });
-  } catch {
-    return [];
-  }
-}
-
 // Universal Dynamic N-Gram Extractor
 function extractResumeKeywords(cvText) {
   if (!cvText) return [\x27Executive\x27];
@@ -107,7 +69,6 @@ function extractResumeKeywords(cvText) {
     .filter((w) => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w));
 
   const phraseCounts = new Map();
-
   for (const w of words) {
     phraseCounts.set(w, (phraseCounts.get(w) || 0) + 1);
   }
@@ -273,7 +234,7 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
 
 async function fetchLiveJoobleJobs(resumeKeywords, location) {
   const apiKey = process.env.JOOBLE_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) return [];
   const cleanLocation = (location || \x27Malaysia\x27).trim();
 
   const q1 = resumeKeywords[0] || \x27Executive\x27;
@@ -285,7 +246,7 @@ async function fetchLiveJoobleJobs(resumeKeywords, location) {
   ]);
 
   const combined = [...(res1 || []), ...(res2 || [])];
-  return combined.length > 0 ? deduplicateJobs(combined) : (res1 || res2 || []);
+  return combined.length > 0 ? deduplicateJobs(combined) : [];
 }
 
 function matchesDateFilter(job, datePosted) {
@@ -308,10 +269,12 @@ function containsTerm(text, term) {
 
 function scoreLiveJobAgainstCV(job, resumeKeywords) {
   if (!resumeKeywords || resumeKeywords.length === 0) return { matchScore: null, matchedSkills: [] };
-  const haystack = job.title + \x27 \x27 + (job.snippet || job.skills || \x27\x27) + \x27 \x27 + (job.company || \x27\x27);
+  const haystack = (job.title + \x27 \x27 + (job.snippet || job.skills || \x27\x27) + \x27 \x27 + (job.company || \x27\x27)).toLowerCase();
   const matched = resumeKeywords.filter((kw) => containsTerm(haystack, kw));
+  if (matched.length === 0) return { matchScore: 0, matchedSkills: [] };
+
   const ratio = matched.length / Math.min(resumeKeywords.length, 8);
-  const matchScore = Math.min(98, Math.max(48, Math.round(48 + ratio * 52)));
+  const matchScore = Math.min(98, Math.max(50, Math.round(50 + ratio * 48)));
   return { matchScore, matchedSkills: matched.slice(0, 6).map((s) => s.toUpperCase()) };
 }
 
@@ -323,22 +286,15 @@ async function filter(location = \x27\x27, minSalary = 0, maxSalary = 10000000, 
   const searchLocation = location.trim() || \x27Malaysia\x27;
 
   let jobs = await fetchLiveJoobleJobs(resumeKeywords, searchLocation);
-  let isLiveFeed = true;
-  if (!jobs || jobs.length === 0) {
-    jobs = loadFallbackCSVJobs();
-    isLiveFeed = false;
-  }
-
-  let datedJobs = isLiveFeed ? jobs.filter((job) => matchesDateFilter(job, datePosted)) : jobs;
+  let datedJobs = jobs.filter((job) => matchesDateFilter(job, datePosted));
   let broadenedFrom7d = false;
-  if (isLiveFeed && datePosted === \x277d\x27 && datedJobs.length === 0 && jobs.length > 0) {
+  if (datePosted === \x277d\x27 && datedJobs.length === 0 && jobs.length > 0) {
     datedJobs = jobs;
     broadenedFrom7d = true;
   }
 
   const results = [];
   for (const job of datedJobs) {
-    if (!isLiveFeed && location.trim() && !job.location.toLowerCase().includes(location.trim().toLowerCase())) continue;
     const convertedSalary = convertSalary(job.salary, job.currency, targetCurrency, rates);
     if (convertedSalary > 0) {
       if (minSalary > 0 && convertedSalary < minSalary) continue;
@@ -351,7 +307,18 @@ async function filter(location = \x27\x27, minSalary = 0, maxSalary = 10000000, 
     }
 
     const { matchScore, matchedSkills } = scoreLiveJobAgainstCV(job, resumeKeywords);
-    results.push({ ...job, convertedSalary, displayCurrency: targetCurrency, rateSource: source, broadenedFrom7d, matchScore, matchedSkills });
+    // Exclude jobs that have zero keyword overlap with the CV so irrelevant jobs never appear
+    if (matchedSkills.length === 0) continue;
+
+    results.push({
+      ...job,
+      convertedSalary,
+      displayCurrency: targetCurrency,
+      rateSource: source,
+      broadenedFrom7d,
+      matchScore,
+      matchedSkills,
+    });
   }
 
   if (cvText) results.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
