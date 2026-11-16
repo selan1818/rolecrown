@@ -1,140 +1,64 @@
-const fs = require('fs');
-const path = require('path');
-
-const FALLBACK_RATES = { USD: 1.0, MYR: 4.45, SGD: 1.34, EUR: 0.92, GBP: 0.79 };
-const FX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-let cachedRates = null;
-let lastFetchedAt = 0;
-
-const JOOBLE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const joobleCache = new Map();
-
-async function getExchangeRates() {
-  const now = Date.now();
-  if (cachedRates && now - lastFetchedAt < FX_CACHE_TTL_MS) {
-    return { rates: cachedRates, source: '24h-cache' };
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-  try {
-    const res = await fetch(
-      'https://api.frankfurter.app/latest?from=USD&to=MYR,SGD,EUR,GBP',
-      { signal: controller.signal }
-    );
-    clearTimeout(timeout);
-    if (!res.ok) throw new Error(`FX HTTP ${res.status}`);
-    const data = await res.json();
-    cachedRates = { ...FALLBACK_RATES, ...(data.rates || {}), USD: 1.0 };
-    lastFetchedAt = now;
-    return { rates: cachedRates, source: 'live-api' };
-  } catch {
-    clearTimeout(timeout);
-    return { rates: cachedRates || FALLBACK_RATES, source: cachedRates ? 'stale-cache' : 'fallback' };
-  }
-}
-
-function convertSalary(amount, fromCurrency, toCurrency, rates) {
-  if (!amount || amount <= 0) return 0;
-  const from = (fromCurrency || 'USD').toUpperCase();
-  const to = (toCurrency || 'MYR').toUpperCase();
-  return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
-}
-
-function parseCSVLine(line) {
-  const result = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') inQuotes = !inQuotes;
-    else if (char === ',' && !inQuotes) {
-      result.push(current.trim());
-      current = '';
-    } else current += char;
-  }
-  result.push(current.trim());
-  return result;
-}
-
-function loadFallbackCSVJobs() {
-  try {
-    const csvPath = path.join(__dirname, '..', 'data', 'jobs.csv');
-    const raw = fs.readFileSync(csvPath, 'utf-8').trim();
-    const lines = raw.split(/\r?\n/);
-    const headers = parseCSVLine(lines[0]);
-    return lines.slice(1).map((line) => {
-      const values = parseCSVLine(line);
-      const job = {};
-      headers.forEach((h, idx) => { job[h] = values[idx] || ''; });
-      job.salary = Number(job.salary) || 0;
-      job.currency = (job.currency || 'USD').toUpperCase();
-      job.apply_url = job.applyUrl || job.apply_url || '#';
-      job.postedAgo = 'Recent';
-      job.updatedAt = null;
-      return job;
-    });
-  } catch {
-    return [];
-  }
-}
-
 function extractResumeKeywords(cvText) {
   if (!cvText) return [];
+
   const stopWords = new Set([
-    'the','and','for','with','from','that','this','have','has','had','are','was','were',
-    'been','being','will','would','could','should','can','may','might','must','into',
-    'over','under','above','below','between','through','during','before','after','each',
-    'other','such','only','same','than','too','very','just','also','well','work','working',
-    'worked','experience','experiences','years','year','month','months','present','current',
-    'currently','role','roles','team','teams','project','projects','management','manager',
-    'managing','managed','responsible','responsibilities','duties','skills','summary',
-    'profile','education','university','college','degree','bachelor','master','diploma',
-    'certificate','certified','certification','email','phone','address','linkedin','github',
-    'references','available','upon','request','strong','excellent','good','ability','using',
-    'used','including','across','within','based','new','high','key','company','organization',
-    'business','services','service','solutions','support','operations','process','processes',
-    'system','systems','data','report','reports','reporting','client','clients','customer',
-    'customers','stakeholders','january','february','march','april','june','july','august',
-    'september','october','november','december','malaysia','kuala','lumpur','selangor',
-    'singapore','remote','hybrid','full','time','part','sdn','bhd'
+    "the", "and", "for", "with", "from", "that", "this", "have", "has", "had",
+    "are", "was", "were", "been", "being", "will", "would", "could", "should",
+    "can", "may", "might", "must", "into", "over", "under", "above", "below",
+    "between", "through", "during", "before", "after", "each", "other", "such",
+    "only", "same", "than", "too", "very", "just", "also", "well", "work",
+    "working", "worked", "experience", "experiences", "years", "year", "month",
+    "months", "present", "current", "currently", "role", "roles", "team", "teams",
+    "project", "projects", "management", "manager", "managing", "managed",
+    "responsible", "responsibilities", duties, "skills", "summary", "profile",
+    "education", "university", "college", "degree", "bachelor", "master",
+    "diploma", "certificate", "certified", "certification", "email", "phone",
+    "address", "linkedin", "github", "references", "available", "upon", "request",
+    "strong", "excellent", "good", "ability", "using", "used", "including",
+    "across", "within", "based", "new", "high", "key", "company", "organization",
+    "business", "services", "service", "solutions", "support", "operations",
+    "process", "processes", "system", "systems", "data", "report", "reports",
+    "reporting", "client", "clients", "customer", "customers", "stakeholders",
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december", "malaysia", "kuala", "lumpur",
+    "selangor", "singapore", "remote", "hybrid", "full", "time", "part", "sdn", "bhd"
   ]);
 
   const rolePatterns = [
-    /\b(credit risk|aml|kyc|trade finance|wealth management|investment banking|corporate banking|retail banking|treasury|auditor|accountant|financial analyst|chartered accountant|actuary|banking)\b/gi,
-    /\b(registered nurse|pharmacist|medical officer|physiotherapist|clinical|healthcare|dentist|doctor)\b/gi,
-    /\b(civil engineer|mechanical engineer|electrical engineer|chemical engineer|quantity surveyor|architect|site engineer|project engineer|qa qc)\b/gi,
+    /\b(itsm|it service management|service delivery|operations lead|major incident|incident manager|problem manager|release manager|service desk|itil|servicenow|dynatrace|citrix|mssql)\b/gi,
+    /\b(credit risk|aml|kyc|trade finance|wealth management|investment banking|corporate banking|retail banking|treasury|auditor|accountant|financial analyst)\b/gi,
+    /\b(registered nurse|pharmacist|medical officer|physiotherapist|clinical|healthcare)\b/gi,
+    /\b(civil engineer|mechanical engineer|electrical engineer|quantity surveyor|architect|site engineer|project engineer|qa qc)\b/gi,
     /\b(supply chain|procurement|logistics|warehouse|freight|inventory|operations manager)\b/gi,
-    /\b(digital marketing|brand manager|content creator|seo|sem|public relations|sales executive|account executive|business development)\b/gi,
-    /\b(human resources|talent acquisition|recruiter|payroll|hr business partner|legal counsel|paralegal|compliance officer)\b/gi,
-    /\b(product manager|project manager|scrum master|business analyst|data analyst|data scientist|software engineer|devops|cloud architect|cybersecurity|network engineer|it support|servicenow|sap|incident manager|problem manager)\b/gi,
+    /\b(digital marketing|brand manager|content creator|seo|sem|public relations|sales executive|business development)\b/gi,
+    /\b(human resources|talent acquisition|recruiter|payroll|hr business partner|legal counsel|compliance officer)\b/gi,
+    /\b(product manager|project manager|scrum master|business analyst|data analyst|data scientist|software engineer|devops|cloud architect|cybersecurity|network engineer|it support|sap)\b/gi,
   ];
 
-  const priorityTerms = [];
+  // Count exact occurrences of each domain pattern across the resume
+  const frequencyMap = new Map();
   for (const pattern of rolePatterns) {
     const matches = cvText.match(pattern);
     if (matches) {
       for (const m of matches) {
         const clean = m.trim().toLowerCase();
-        if (!priorityTerms.includes(clean)) priorityTerms.push(clean);
+        frequencyMap.set(clean, (frequencyMap.get(clean) || 0) + 1);
       }
     }
   }
 
-  const words = cvText
-    .toLowerCase()
-    .replace(/[^a-z0-9+#.\s-]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w));
-
-  const freq = new Map();
-  for (const w of words) freq.set(w, (freq.get(w) || 0) + 1);
-
-  const topFrequent = [...freq.entries()]
+  // Sort descending by frequency count (terms appearing most frequently take absolute priority)
+  const rankedTerms = [...frequencyMap.entries()]
     .sort((a, b) => b[1] - a[1])
-    .map(([word]) => word)
-    .filter((w) => !priorityTerms.some((p) => p.includes(w)));
+    .map(([term]) => term);
 
-  return [...priorityTerms.slice(0, 5), ...topFrequent.slice(0, 10)];
+  // Filter out any single-occurrence minor terms if higher frequency domain terms exist
+  const dominantTerms = rankedTerms.filter((term, idx) => {
+    const count = frequencyMap.get(term);
+    return count > 1 || idx < 3;
+  });
+
+  return dominantTerms.length > 0 ? dominantTerms : rankedTerms;
 }
 
 function parseJoobleSalary(salaryStr, locationStr) {
