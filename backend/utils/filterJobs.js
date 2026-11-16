@@ -128,17 +128,17 @@ function extractResumeKeywords(cvText) {
     'january', 'february', 'march', 'april', 'june', 'july', 'august',
     'september', 'october', 'november', 'december', 'jan', 'feb', 'mar', 'apr',
     'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'malaysia', 'kuala', 'lumpur',
-    'selangor', 'singapore', 'remote', 'hybrid', 'full', 'time', 'part'
+    'selangor', 'singapore', 'remote', 'hybrid', 'full', 'time', 'part', 'sdn', 'bhd'
   ]);
 
   const rolePatterns = [
-    /\b(credit risk|aml|kyc|trade finance|wealth management|investment banking|corporate banking|retail banking|treasury|auditor|accountant|financial analyst|chartered accountant|actuary)\b/gi,
+    /\b(credit risk|aml|kyc|trade finance|wealth management|investment banking|corporate banking|retail banking|treasury|auditor|accountant|financial analyst|chartered accountant|actuary|banking)\b/gi,
     /\b(registered nurse|pharmacist|medical officer|physiotherapist|clinical|healthcare|dentist|doctor)\b/gi,
     /\b(civil engineer|mechanical engineer|electrical engineer|chemical engineer|quantity surveyor|architect|site engineer|project engineer|qa qc)\b/gi,
     /\b(supply chain|procurement|logistics|warehouse|freight|inventory|operations manager)\b/gi,
     /\b(digital marketing|brand manager|content creator|seo|sem|public relations|sales executive|account executive|business development)\b/gi,
     /\b(human resources|talent acquisition|recruiter|payroll|hr business partner|legal counsel|paralegal|compliance officer)\b/gi,
-    /\b(product manager|project manager|scrum master|business analyst|data analyst|data scientist|software engineer|devops|cloud architect|cybersecurity|network engineer|it support|servicenow|sap)\b/gi,
+    /\b(product manager|project manager|scrum master|business analyst|data analyst|data scientist|software engineer|devops|cloud architect|cybersecurity|network engineer|it support|servicenow|sap|incident manager|problem manager)\b/gi,
   ];
 
   const priorityTerms = [];
@@ -219,14 +219,8 @@ function stripHtml(html) {
     .trim();
 }
 
-async function fetchLiveJoobleJobs(keywords, location) {
-  const apiKey = process.env.JOOBLE_API_KEY;
-  if (!apiKey) return null;
-
-  const cleanKeywords = (keywords || 'executive').trim();
-  const cleanLocation = (location || 'Malaysia').trim();
+async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
   const cacheKey = `${cleanKeywords.toLowerCase()}|${cleanLocation.toLowerCase()}`;
-
   const now = Date.now();
   const cached = joobleCache.get(cacheKey);
   if (cached && now - cached.timestamp < JOOBLE_CACHE_TTL_MS) {
@@ -278,9 +272,27 @@ async function fetchLiveJoobleJobs(keywords, location) {
     return normalized;
   } catch (err) {
     clearTimeout(timeout);
-    console.error('Jooble API fallback triggered:', err.message);
+    console.error('Jooble API error:', err.message);
     return null;
   }
+}
+
+async function fetchLiveJoobleJobs(resumeKeywords, location) {
+  const apiKey = process.env.JOOBLE_API_KEY;
+  if (!apiKey) return null;
+
+  const cleanLocation = (location || 'Malaysia').trim();
+  const primaryQuery = resumeKeywords.slice(0, 2).join(' ') || 'Executive';
+
+  // Attempt 1: Top 2 role/domain terms
+  let jobs = await queryJoobleOnce(primaryQuery, cleanLocation, apiKey);
+
+  // Attempt 2: Broaden to single primary role/term if Attempt 1 returned 0
+  if (Array.isArray(jobs) && jobs.length === 0 && resumeKeywords.length > 1) {
+    jobs = await queryJoobleOnce(resumeKeywords[0], cleanLocation, apiKey);
+  }
+
+  return jobs;
 }
 
 function containsTerm(text, term) {
@@ -300,7 +312,7 @@ function scoreLiveJobAgainstCV(job, resumeKeywords) {
   const matched = resumeKeywords.filter((kw) => containsTerm(haystack, kw));
 
   const ratio = matched.length / Math.min(resumeKeywords.length, 8);
-  const matchScore = Math.min(98, Math.max(45, Math.round(45 + ratio * 55)));
+  const matchScore = Math.min(98, Math.max(48, Math.round(48 + ratio * 52)));
 
   return {
     matchScore,
@@ -314,10 +326,9 @@ async function filter(location = '', minSalary = 0, maxSalary = 10000000, cv = '
   const targetCurrency = (currency || 'MYR').toUpperCase();
   const resumeKeywords = extractResumeKeywords(cvText);
 
-  const searchQuery = resumeKeywords.slice(0, 3).join(' ') || 'Executive';
   const searchLocation = location.trim() || 'Malaysia';
 
-  let jobs = await fetchLiveJoobleJobs(searchQuery, searchLocation);
+  let jobs = await fetchLiveJoobleJobs(resumeKeywords, searchLocation);
   let isLiveFeed = true;
 
   if (!jobs || jobs.length === 0) {
@@ -334,8 +345,11 @@ async function filter(location = '', minSalary = 0, maxSalary = 10000000, cv = '
 
     const convertedSalary = convertSalary(job.salary, job.currency, targetCurrency, rates);
 
-    if (minSalary > 0 && convertedSalary < minSalary) continue;
-    if (convertedSalary > 0 && convertedSalary > maxSalary) continue;
+    // Only exclude by salary when the employer actually disclosed a salary (> 0)
+    if (convertedSalary > 0) {
+      if (minSalary > 0 && convertedSalary < minSalary) continue;
+      if (convertedSalary > maxSalary) continue;
+    }
 
     if (!cvText) {
       results.push({
