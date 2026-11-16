@@ -173,6 +173,44 @@ function formatPostedAgo(updatedIso) {
   return diffDays === 1 ? '1d ago' : `${diffDays}d ago`;
 }
 
+// Resolve Jooble redirect links to the direct employer URL; if blocked by Cloudflare, build an unblockable direct search link
+async function resolveDirectApplyUrl(rawLink, title, company, location) {
+  const cleanQuery = encodeURIComponent(`${title} ${company !== 'Verified Employer' ? company : ''} ${location}`.trim());
+  const googleJobsFallback = `https://www.google.com/search?q=${cleanQuery}+jobs&ibp=htl;jobs`;
+
+  if (!rawLink || rawLink === '#') return { url: googleJobsFallback, isDirect: false };
+
+  // If link is already outside jooble.org, use it directly
+  if (!rawLink.includes('jooble.org')) {
+    return { url: rawLink, isDirect: true };
+  }
+
+  // Attempt fast server-side redirect inspection (2.5s timeout)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  try {
+    const res = await fetch(rawLink, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    const locHeader = res.headers.get('location');
+    if (locHeader && locHeader.startsWith('http') && !locHeader.includes('jooble.org')) {
+      return { url: locHeader, isDirect: true };
+    }
+  } catch {
+    clearTimeout(timeout);
+  }
+
+  // Fallback to unblockable Google Jobs direct role link so users never hit Cloudflare 403
+  return { url: googleJobsFallback, isDirect: false };
+}
+
 function deduplicateJobs(jobs) {
   const seen = new Map();
   for (const job of jobs) {
@@ -208,11 +246,10 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
     const data = await res.json();
     const rawJobs = Array.isArray(data.jobs) ? data.jobs : [];
 
-    const normalized = deduplicateJobs(
+    const dedupedRaw = deduplicateJobs(
       rawJobs.map((item, idx) => {
         const cleanSnippet = stripHtml(item.snippet);
         const { amount, currency } = parseJoobleSalary(item.salary, item.location || cleanLocation);
-        const link = item.link || '#';
         return {
           id: item.id || `jooble-${idx}-${Date.now()}`,
           title: item.title || 'Open Position',
@@ -223,11 +260,25 @@ async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
           currency,
           skills: cleanSnippet.slice(0, 180),
           snippet: cleanSnippet,
-          applyUrl: link,
-          apply_url: link,
+          rawLink: item.link || '#',
           source: item.source || 'Jooble Live',
           updatedAt: item.updated || null,
           postedAgo: formatPostedAgo(item.updated),
+        };
+      })
+    );
+
+    // Resolve all direct apply links in parallel
+    const normalized = await Promise.all(
+      dedupedRaw.map(async (job) => {
+        const resolved = await resolveDirectApplyUrl(job.rawLink, job.title, job.company, job.location);
+        const linkedinSearchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(`${job.title} ${job.company}`)}&location=${encodeURIComponent(job.location)}`;
+        return {
+          ...job,
+          applyUrl: resolved.url,
+          apply_url: resolved.url,
+          isDirectLink: resolved.isDirect,
+          linkedinSearchUrl,
         };
       })
     );

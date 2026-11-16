@@ -236,6 +236,7 @@ function App() {
               ) : (
                 jobs.map((job) => {
                   const link = job.applyUrl || job.apply_url || '#';
+                  const linkedinLink = job.linkedinSearchUrl || `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(`${job.title} ${job.company}`)}&location=${encodeURIComponent(job.location)}`;
                   return (
                     <div key={job.id} style={{ border: '1px solid rgba(255, 255, 255, 0.1)', borderLeft: '4px solid #d4af37', borderRadius: '12px', padding: '18px 20px', marginBottom: '14px', backgroundColor: 'rgba(18, 24, 38, 0.85)', backdropFilter: 'blur(12px)', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
@@ -283,9 +284,14 @@ function App() {
                         <strong>Summary:</strong> {job.skills}
                       </p>
 
-                      <a href={link} target="_blank" rel="noreferrer" style={{ display: 'inline-block', color: '#f0c75e', fontWeight: '600', fontSize: '14px', textDecoration: 'none' }}>
-                        Apply Now &rarr;
-                      </a>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px' }}>
+                        <a href={link} target="_blank" rel="noreferrer noopener" style={{ display: 'inline-block', color: '#0b0d12', background: 'linear-gradient(135deg, #f0c75e 0%, #c99b26 100%)', padding: '6px 14px', borderRadius: '6px', fontWeight: '700', fontSize: '13px', textDecoration: 'none' }}>
+                          Apply Now &rarr;
+                        </a>
+                        <a href={linkedinLink} target="_blank" rel="noreferrer noopener" style={{ display: 'inline-block', color: '#93c5fd', fontWeight: '600', fontSize: '13px', textDecoration: 'none' }}>
+                          View on LinkedIn &nearr;
+                        </a>
+                      </div>
                     </div>
                   );
                 })
