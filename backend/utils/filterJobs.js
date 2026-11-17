@@ -32,7 +32,7 @@ function convertSalary(amount, fromCurrency, toCurrency, rates) {
   return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
 }
 
-// 1. Standard English grammar, calendar, location, and resume section headers ONLY
+// 1. Grammar, employment metadata (contract/remote/full-time), and resume boilerplate NEVER extracted
 const STOP_WORDS = new Set([
   "the","and","for","with","from","that","this","have","has","had","are","was","were","been","being",
   "will","would","could","should","can","may","might","must","into","over","under","above","below",
@@ -43,44 +43,53 @@ const STOP_WORDS = new Set([
   "certifications","skills","competencies","proficiency","summary","profile","professional","references",
   "available","upon","request","email","phone","address","linkedin","github","gmail","com","january",
   "february","march","april","june","july","august","september","october","november","december",
-  "malaysia","kuala","lumpur","selangor","singapore","remote","hybrid","full","part","time","sdn","bhd",
-  "berhad","hons","cgpa","awarded","distinction","using","used","including","across","within","based",
-  "new","high","key","strong","excellent","good","ability","proven","seasoned","results","driven",
-  "seeking","challenging","decade","global","regional","apac","internal","external","various","multiple",
-  "daily","weekly","monthly","ongoing","clear","concise","documented","effective","effectively","closely",
-  "smoothly","properly","strict","strictly","complex","large","scale","level","tier","first","second",
-  "end","ensure","ensuring","conduct","conducted","perform","performed","develop","developed","deliver",
-  "delivered","drive","driving","oversee","spearhead","liaise","resolve","prepare","analyze","validate",
-  "serve","contribute","leverage","navigate","align","evolving","existing","enhancing","overall"
+  "malaysia","kuala","lumpur","selangor","singapore","puchong","klang","cyberjaya","remote","hybrid",
+  "onsite","contract","contracts","contractor","permanent","temporary","freelance","full","part","time",
+  "sdn","bhd","berhad","inc","ltd","corp","group","hons","cgpa","awarded","distinction","using","used",
+  "including","across","within","based","new","high","key","strong","excellent","good","ability","proven",
+  "seasoned","results","driven","seeking","challenging","decade","global","regional","apac","emea","region",
+  "internal","external","various","multiple","daily","weekly","monthly","ongoing","clear","concise",
+  "documented","effective","effectively","closely","smoothly","properly","strict","strictly","complex",
+  "large","scale","level","tier","first","second","end","ensure","ensuring","conduct","conducted",
+  "perform","performed","develop","developed","deliver","delivered","drive","driving","oversee",
+  "spearhead","liaise","resolve","prepare","analyze","validate","serve","contribute","leverage",
+  "navigate","align","evolving","existing","enhancing","overall","progressing","frontline","account",
+  "accounts","countries","netherlands","candidate","candidacy","candidates","interview","interviews",
+  "hiring","hire","hires","proposal","proposals","dynamic","opportunity","opportunities","fair",
+  "detailed","submit","video","followed","upcoming","stable","internet","connection","billion","fortune"
 ]);
 
-// 2. Generic corporate/role words: blocked as 1-word matches, but allowed to form 2-word phrases (e.g. "service desk", "data center")
-const GENERIC_NOUNS = new Set([
+// 2. Vague rank/corporate words: blocked as 1-word matches, but allowed inside 2-word phrases (e.g. "service desk", "product manager")
+const VAGUE_SINGLE_WORDS = new Set([
   "management","manager","managers","managing","managed","lead","leading","leader","leadership","senior",
   "junior","specialist","specialists","analyst","analysts","associate","executive","officer","director",
-  "head","supervisor","coordinator","consultant","advisor","engineer","engineering","technician","role",
-  "roles","team","teams","company","organization","department","business","operations","operational",
-  "support","supporting","supported","service","services","system","systems","process","processes",
-  "project","projects","product","products","solution","solutions","application","applications",
-  "enterprise","technology","technologies","technical","data","report","reports","reporting","client",
-  "clients","customer","customers","stakeholder","stakeholders","vendor","vendors","quality","control",
-  "performance","productivity","strategy","strategic","development","analysis","analytical","review",
-  "reviews","training","coaching","monitoring","tracking","planning","delivery","transition","governance",
-  "implementation","implementations","improvement","improvements","excellence","problem","problems",
-  "solving","incident","incidents","release","change","request","ticket","tickets","backlog","backlogs",
-  "desk","center","centre","production","environment","environments","policy","policies","guidelines",
-  "procedures","requirements","standards","framework","model","tools","platforms","software","hardware",
-  "risk","risks","assessment","testing","screening","onboarding","remediation","documentation","office",
-  "suite","digital","literacy","thinking","attention","detail","privacy","core","history","background",
-  "backgrounds","source","wealth","funds","research","entity","structures","hierarchies","ultimate",
-  "beneficial","ratings","mitigation","strategies","programs","hires","members","capability","metrics",
-  "effort","counts","optimize","resource","allocation","tasks","comprehensive","potential","findings",
-  "recommending","summarizing","cases","case","workflow","forms","subject","matter","expert","sme",
-  "due","anti","money","counter","enhanced","major","root","cause","periodic","bank","banking",
-  "international","institute","association","science","sciences","human","financial","crime","legal"
+  "head","supervisor","coordinator","consultant","advisor","engineer","engineering","technician",
+  "representative","assistant","intern","trainee","partner","owner","owners","ownership","member",
+  "members","role","roles","team","teams","company","organization","department","division","unit",
+  "business","operations","operational","support","supporting","supported","service","services","system",
+  "systems","process","processes","project","projects","product","products","solution","solutions",
+  "application","applications","enterprise","technology","technologies","technical","data","report",
+  "reports","reporting","client","clients","customer","customers","stakeholder","stakeholders","vendor",
+  "vendors","quality","control","performance","productivity","strategy","strategic","development",
+  "analysis","analytical","review","reviews","training","coaching","monitoring","tracking","planning",
+  "delivery","implementation","implementations","improvement","improvements","excellence","problem",
+  "problems","solving","request","requests","ticket","tickets","backlog","backlogs","desk","center",
+  "centre","production","environment","environments","policy","policies","guidelines","procedures",
+  "requirements","standards","framework","model","tools","platforms","software","hardware","risk",
+  "risks","assessment","testing","remediation","documentation","office","suite","digital","literacy",
+  "thinking","attention","detail","privacy","core","history","background","backgrounds","source",
+  "wealth","funds","research","entity","structures","hierarchies","ultimate","beneficial","ratings",
+  "mitigation","strategies","programs","capability","metrics","effort","counts","optimize","resource",
+  "allocation","tasks","comprehensive","potential","findings","recommending","summarizing","cases",
+  "case","workflow","forms","subject","matter","expert","sme","due","anti","money","counter","enhanced",
+  "major","root","cause","periodic","bank","banking","international","institute","association","science",
+  "sciences","human","financial","crime","legal","adherence","landscapes","stability","routing","floor",
+  "queue","queues","shift","shifts","agreements","budget","budgets","cost","fixed","independent",
+  "escalation","escalated","timelines","timeline","priorities","assign","targeted","red","flags",
+  "adverse","media","politically","exposed","persons","terrorist","financing","laundering","negara"
 ]);
 
-// 3. Universal soft-skill / boilerplate bigrams to ignore
+// 3. Soft-skill / generic bigrams that should never drive searches or title matches
 const BOILERPLATE_BIGRAMS = new Set([
   "project management","stakeholder management","team leadership","problem solving","analytical thinking",
   "digital literacy","office suite","microsoft office","data privacy","privacy management","data analysis",
@@ -88,7 +97,13 @@ const BOILERPLATE_BIGRAMS = new Set([
   "performance metrics","performance feedback","training programs","system implementations","automation tools",
   "research tools","remediation projects","data remediation","mitigation strategies","risk ratings",
   "legal entity","entity structures","ownership hierarchies","ultimate beneficial","beneficial ownership",
-  "periodic review","periodic reviews","review process","internal policies","operational standards"
+  "periodic review","periodic reviews","review process","internal policies","operational standards",
+  "politically exposed","exposed persons","adverse media","counter terrorist","terrorist financing",
+  "money laundering","anti money","bank negara","asian institute","chartered bankers","science technology",
+  "business administration","business owner","delivery center","ticket backlogs","repeat incidents",
+  "customer backgrounds","tax documentation","assessment reports","bnm guidelines","mas guidelines",
+  "regulatory requirements","regulatory landscapes","strategic compliance","compliance initiatives",
+  "cdd procedures","cdd platforms","cdd tasks","aml analysts","senior cdd","customer due","enhanced due"
 ]);
 
 function stripEducationSection(cvText) {
@@ -96,6 +111,17 @@ function stripEducationSection(cvText) {
     /\b(?:EDUCATION|Education)\b[\s\S]{0,650}?(?=\b(?:CERTIFICATIONS|Certifications|SKILLS|Skills|COMPETENCIES|Competencies|TECHNICAL|Technical|LANGUAGES|Languages|PROJECTS|Projects)\b|$)/g,
     " "
   );
+}
+
+// Strip parenthetical metadata like "(Remote, Contract)" or "[APAC]" from job titles before matching
+function getCoreJobTitle(rawTitle) {
+  return (rawTitle || "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\b(remote|hybrid|onsite|contract|contractor|permanent|temporary|freelance|full[- ]?time|part[- ]?time|apac|emea|malaysia|singapore|kuala lumpur|selangor)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function buildResumeProfile(cvText) {
@@ -106,39 +132,49 @@ function buildResumeProfile(cvText) {
   const workingText = stripEducationSection(cvText);
   const totalWords = workingText.trim().split(/\s+/).length;
   const minCount = totalWords <= 120 ? 1 : 2;
-  const clauses = workingText.toLowerCase().split(/[,.;:()\[\]\n\r•·|\/\\–—&]+/);
+  const rawClauses = workingText.split(/[,.;:()\[\]\n\r•·|\/\\–—&]+/);
 
   const wordCounts = new Map();
   const bigramCounts = new Map();
   const unigramScores = new Map();
   const bigramScores = new Map();
 
-  for (let cIdx = 0; cIdx < clauses.length; cIdx++) {
-    const tokens = clauses[cIdx]
-      .replace(/[^a-z0-9+#\s-]/g, " ")
+  for (let cIdx = 0; cIdx < rawClauses.length; cIdx++) {
+    const rawClause = rawClauses[cIdx];
+    const hasLowercase = /[a-z]/.test(rawClause);
+    const rawTokens = rawClause
+      .replace(/[^A-Za-z0-9+#\s-]/g, " ")
       .replace(/-/g, " ")
       .split(/\s+/)
       .filter((w) => w.length >= 3 && !/^\d+$/.test(w));
 
     const boost = cIdx < 8 ? 2 : 1;
 
-    for (let i = 0; i < tokens.length; i++) {
-      const w = tokens[i];
-      if (!STOP_WORDS.has(w)) {
-        wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
-        if (!GENERIC_NOUNS.has(w)) {
-          unigramScores.set(w, (unigramScores.get(w) || 0) + boost);
-        }
+    for (let i = 0; i < rawTokens.length; i++) {
+      const rawW = rawTokens[i];
+      const w = rawW.toLowerCase();
+      if (STOP_WORDS.has(w)) continue;
+
+      wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
+
+      // Detect true uppercase acronyms (e.g. ITSM, ITIL, AML, CDD, KYC, FATCA) or CamelCase tools (ServiceNow)
+      const isExplicitAcronymOrTool =
+        hasLowercase && (/^[A-Z]{2,6}$/.test(rawW) || /^[A-Z][a-z]+[A-Z][A-Za-z0-9]*$/.test(rawW));
+
+      if (!VAGUE_SINGLE_WORDS.has(w) || isExplicitAcronymOrTool) {
+        const acronymBoost = isExplicitAcronymOrTool ? 3 : 0;
+        unigramScores.set(w, (unigramScores.get(w) || 0) + boost + acronymBoost);
       }
 
-      if (i < tokens.length - 1) {
-        const w1 = tokens[i];
-        const w2 = tokens[i + 1];
-        if (STOP_WORDS.has(w1) || STOP_WORDS.has(w2) || w1 === w2) continue;
-        const bigram = w1 + " " + w2;
+      if (i < rawTokens.length - 1) {
+        const w2 = rawTokens[i + 1].toLowerCase();
+        if (STOP_WORDS.has(w2) || w === w2) continue;
+
+        const bigram = w + " " + w2;
         if (BOILERPLATE_BIGRAMS.has(bigram)) continue;
 
-        const bothShortAcronyms = w1.length <= 4 && w2.length <= 4 && !GENERIC_NOUNS.has(w1) && !GENERIC_NOUNS.has(w2);
+        const bothShortAcronyms =
+          w.length <= 4 && w2.length <= 4 && !VAGUE_SINGLE_WORDS.has(w) && !VAGUE_SINGLE_WORDS.has(w2);
         if (bothShortAcronyms) continue;
 
         bigramCounts.set(bigram, (bigramCounts.get(bigram) || 0) + 1);
@@ -147,11 +183,13 @@ function buildResumeProfile(cvText) {
     }
   }
 
+  // 1. Recurring Domain Terms & Acronyms (e.g. itsm, servicenow, itil, dynatrace, incident, aml, cdd, kyc, compliance, diligence, onboarding)
   const domainUnigrams = [...unigramScores.entries()]
-    .filter(([w]) => (wordCounts.get(w) || 0) >= minCount)
+    .filter(([w, score]) => (wordCounts.get(w) || 0) >= minCount || score >= 4)
     .sort((a, b) => b[1] - a[1])
     .map(([w]) => w);
 
+  // 2. Recurring 2-Word Role & Discipline Phrases (e.g. service management, service delivery, problem manager, product manager, due diligence, financial crime)
   const domainBigrams = [...bigramScores.entries()]
     .filter(([bg]) => {
       if ((bigramCounts.get(bg) || 0) >= minCount) return true;
@@ -161,6 +199,7 @@ function buildResumeProfile(cvText) {
     .sort((a, b) => b[1] - a[1])
     .map(([bg]) => bg);
 
+  // 3. Interleave top Role Phrases and top Domain Terms for Jooble search queries
   const searchQueries = [];
   const maxLen = Math.max(domainBigrams.length, domainUnigrams.length);
   for (let i = 0; i < maxLen; i++) {
@@ -169,7 +208,7 @@ function buildResumeProfile(cvText) {
   }
   if (searchQueries.length === 0) searchQueries.push("Executive");
 
-  const skillKeywords = [...new Set([...domainUnigrams, ...domainBigrams])].slice(0, 24);
+  const skillKeywords = [...new Set([...domainUnigrams, ...domainBigrams])].slice(0, 26);
   const titleMatchers = [...new Set([...domainUnigrams, ...domainBigrams])];
 
   return { searchQueries: searchQueries.slice(0, 8), skillKeywords, titleMatchers };
@@ -339,19 +378,20 @@ function containsTerm(text, term) {
 }
 
 function scoreLiveJobAgainstCV(job, profileOrKeywords, cvText = "") {
-  const profile = Array.isArray(profileOrKeywords)
-    ? buildResumeProfile(cvText || profileOrKeywords.join(" "))
+  const profile = (!profileOrKeywords || Array.isArray(profileOrKeywords))
+    ? buildResumeProfile(cvText || (profileOrKeywords || []).join(" "))
     : profileOrKeywords;
 
   const { skillKeywords, titleMatchers } = profile;
   if (!skillKeywords || skillKeywords.length === 0) return { matchScore: null, matchedSkills: [] };
 
-  const titleLower = (job.title || "").toLowerCase();
+  // Strip parenthetical metadata like "(Remote, Contract)" from the job title first
+  const coreTitle = getCoreJobTitle(job.title);
   const snippetLower = (job.snippet || job.skills || "").toLowerCase();
-  const haystack = titleLower + " " + snippetLower;
+  const haystack = coreTitle + " " + snippetLower;
 
-  // Universal Rule: The Job Title MUST contain at least one recurring domain term or 2-word role phrase from the resume
-  const titleMatches = titleMatchers.filter((tm) => containsTerm(titleLower, tm));
+  // The Core Job Title MUST match at least one domain term or 2-word role phrase from the resume
+  const titleMatches = titleMatchers.filter((tm) => containsTerm(coreTitle, tm));
   if (titleMatches.length === 0) {
     return { matchScore: 0, matchedSkills: [] };
   }
@@ -404,7 +444,8 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
 
   let datedJobs = relevantJobs.filter((job) => matchesDateFilter(job, datePosted));
   let broadenedFrom7d = false;
-  if (datePosted === "7d" && datedJobs.length === 0 && relevantJobs.length > 0) {
+  // If fewer than 5 relevant jobs were posted in the last 7 days, include all relevant matches so 1-2 recent posts never hide the rest
+  if (datePosted === "7d" && datedJobs.length < 5 && relevantJobs.length > datedJobs.length) {
     datedJobs = relevantJobs;
     broadenedFrom7d = true;
   }
