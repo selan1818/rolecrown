@@ -158,7 +158,7 @@ async function queryJooble(keywords, location, key) {
     const r = await fetch("https://jooble.org/api/" + key.trim(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keywords, location, page: 1, datecreatedfrom: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) }),
+      body: JSON.stringify({ keywords, location, page: 1 }),
       signal: AbortSignal.timeout(8000)
     });
     const d = await r.json();
