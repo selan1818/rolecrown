@@ -61,7 +61,7 @@ async function extractProfileWithAI(cv, key) {
     "Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:",
     "{",
     '  "primaryRole": "1-sentence description of the candidate exact profession, seniority, and domain",',
-    '  "searchQueries": ["6 specific job title search strings to find matching jobs on a job board for this candidate"],',
+    '  "searchQueries": ["5 short, common 2-to-3 word Malaysian job board search titles (e.g. Service Delivery Manager, Incident Manager, IT Operations Manager) without extra prefixes like Regional or Senior"],',
     '  "coreSkills": ["10 specific technical/domain skills, tools, frameworks, or certifications from this resume"]',
     "}",
     "",
@@ -158,7 +158,7 @@ async function queryJooble(keywords, location, key) {
     const r = await fetch("https://jooble.org/api/" + key.trim(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keywords, location, page: 1, datecreatedfrom: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) }),
+      body: JSON.stringify({ keywords, location, page: 1, }),
       signal: AbortSignal.timeout(8000)
     });
     const d = await r.json();
@@ -212,7 +212,7 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
     if (!azId || !azKey) return [];
     const u = new URL("https://api.://adzuna.com");
     u.search = new URLSearchParams({ app_id: azId.trim(), app_key: azKey.trim(), results_per_page: "15", what: q, max_days_old: "7" });
-    const r = await fetch(u).then(x => x.ok ? x.json() : { results: [] }).catch(() => ({ results: [] }));
+    const res = await fetch(u); console.log("DEBUG Adzuna status:", res.status, "query:", q); const r = res.ok ? await res.json() : { results: [] };
     return (r.results || []).map((it, i) => ({
       id: "az-" + (it.id || i), title: it.title || "Open Position", company: it.company?.display_name || "Verified Employer",
       location: it.location?.display_name || loc, salary: Math.round((Number(it.salary_min)||0)/12), rawSalaryText: "", currency: "MYR",
