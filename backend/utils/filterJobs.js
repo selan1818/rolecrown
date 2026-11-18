@@ -208,7 +208,7 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   if (Boolean(aiProf) === false || Boolean(aiProf.searchQueries?.length) === false) return [];
 
   const queries = aiProf.searchQueries.slice(0, 6);
-  const azFn = async (q) => {
+  const azFn = async (q) => { const azId = process.env.ADZUNA_APP_ID, azKey = process.env.ADZUNA_APP_KEY;
     if (!azId || !azKey) return [];
     const u = new URL("https://api.://adzuna.com");
     u.search = new URLSearchParams({ app_id: azId.trim(), app_key: azKey.trim(), results_per_page: "15", what: q, max_days_old: "7" });
