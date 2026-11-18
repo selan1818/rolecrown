@@ -6,7 +6,7 @@ async function getRates() {
   if (fxCache && Date.now() - fxTs < 86400000) return { rates: fxCache, source: "24h-cache" };
   try {
     const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=MYR,SGD,EUR,GBP", { signal: AbortSignal.timeout(4000) });
-    const d = await r.json();
+    if (!r.ok) { console.error("Jooble HTTP", r.status, await r.text()); return []; } const d = await r.json();
     fxCache = { ...RATES, ...(d.rates || {}), USD: 1 };
     fxTs = Date.now();
     return { rates: fxCache, source: "live-api" };
