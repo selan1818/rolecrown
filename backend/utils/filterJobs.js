@@ -210,7 +210,7 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   const queries = aiProf.searchQueries.slice(0, 6);
   const azFn = async (q) => {
     if (!azId || !azKey) return [];
-    const u = new URL("https://adzuna.com");
+    const u = new URL("https://api.://adzuna.com");
     u.search = new URLSearchParams({ app_id: azId.trim(), app_key: azKey.trim(), results_per_page: "15", what: q, max_days_old: "7" });
     const r = await fetch(u).then(x => x.ok ? x.json() : { results: [] }).catch(() => ({ results: [] }));
     return (r.results || []).map((it, i) => ({
