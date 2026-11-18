@@ -23,8 +23,13 @@ async function askGemini(prompt, key) {
   try {
     const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-goog-api-key": key.trim() },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": key.trim()
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      }),
       signal: AbortSignal.timeout(12000)
     });
     if (!r.ok) {
@@ -37,7 +42,7 @@ async function askGemini(prompt, key) {
     const m = txt.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (e) {
-    console.error("Gemini error:", e.message);
+    console.error("Gemini fetch error:", e.message);
     return null;
   }
 }
@@ -45,81 +50,125 @@ async function askGemini(prompt, key) {
 async function extractProfileWithAI(cv, key) {
   const ck = cv.slice(0, 250) + "|" + cv.length;
   if (aiCache.has(ck)) return aiCache.get(ck);
-  const p = "Return ONLY a valid JSON object (no markdown) with keys: \"primaryRole\" (1-sentence summary of candidate core profession), \"searchQueries\" (array of 6 strings: 4 job titles and 2 domain acronyms for this candidate), \"coreSkills\" (array of 12 domain skills/tools, never Contract, Remote, Technology, or Data Center unless primary profession). Resume: " + cv.slice(0, 3000);
+  const p = "Analyze this resume and return ONLY a valid JSON object (no markdown) with keys: \"primaryRole\" (short core profession title, e.g. \"IT Service Management & Operations Lead\" or \"AML / CDD Compliance Specialist\"), \"searchQueries\" (array of 6 specific job search strings/titles for this candidate), \"coreSkills\" (array of 12 domain-specific skills/acronyms from the resume, never generic words like Contract, Remote, Technology, or Data Center), \"excludedRoles\" (array of 10 unrelated career tracks to block, always including procurement, sourcing, marketing, sales, deal desk, hr, clinical, vendor onboarding unless that is the candidate primary profession). Resume: " + cv.slice(0, 3000);
   const res = await askGemini(p, key);
-  if (res?.searchQueries?.length) { aiCache.set(ck, res); return res; }
+  if (res?.searchQueries?.length) {
+    aiCache.set(ck, res);
+    return res;
+  }
   return null;
 }
 
-async function evaluateJobsWithAI(cv, prof, jobs, key) {
+async function evaluateJobsWithAI(cv, aiProf, jobs, key) {
   if (!jobs?.length) return null;
   const batch = jobs.slice(0, 35);
-  const list = batch.map((j, index) => ({ index, title: j.title, company: j.company, snippet: (j.snippet || "").slice(0, 160) }));
-  const p = "Candidate Role: " + (prof.primaryRole || "") + ". Skills: " + (prof.coreSkills || []).join(", ") + ". Reject any job from a different career track (reject Procurement, Sourcing, Deal Desk, Marketing, Sales, HR, Clinical, Vendor Onboarding clerical, or Factory roles unless that is the candidate primary profession). Return ONLY JSON: {\"matches\": [{\"index\": number, \"matchScore\": 68-98, \"matchedSkills\": [\"2-5 UPPERCASE SKILL BADGES\"]}]}. Jobs: " + JSON.stringify(list);
+  const excerpts = batch.map((j, index) => ({
+    index,
+    title: j.title,
+    company: j.company,
+    excerpt: (j.snippet || "").slice(0, 140)
+  }));
+  const p = "Candidate Role: " + (aiProf.primaryRole || "") + " | Core Skills: " + (aiProf.coreSkills || []).join(", ") + " | Resume Excerpt: " + cv.slice(0, 1000) + " | Reject any job from a different career track (strictly reject Procurement, Strategic Sourcing, Deal Desk, Marketing, Sales, HR, Clinical, Vendor Onboarding clerical, or Factory roles unless that is the candidate primaryRole). Return ONLY valid JSON: {\"matches\": [{\"index\": number, \"matchScore\": 70-98, \"matchedSkills\": [\"2-5 UPPERCASE SKILL BADGES\"]}]}. JOBS: " + JSON.stringify(excerpts);
   const res = await askGemini(p, key);
   if (!Array.isArray(res?.matches)) return null;
   return res.matches.filter((m) => batch[m.index]).map((m) => ({
     ...batch[m.index],
-    matchScore: Math.min(98, Math.max(65, Number(m.matchScore) || 75)),
-    matchedSkills: (m.matchedSkills || prof.coreSkills || []).slice(0, 5).map((s) => String(s).toUpperCase())
+    matchScore: Math.min(98, Math.max(68, Number(m.matchScore) || 78)),
+    matchedSkills: (m.matchedSkills || aiProf.coreSkills || []).slice(0, 5).map((s) => String(s).toUpperCase())
   }));
 }
 
-const STOP = new Set(["the","and","for","with","from","that","this","have","has","had","are","was","were","will","would","could","should","into","over","under","between","through","during","before","after","work","working","worked","experience","experiences","years","year","month","months","present","current","currently","education","university","college","degree","bachelor","master","diploma","certificate","certified","certification","certifications","skills","competencies","proficiency","summary","profile","professional","email","phone","address","linkedin","gmail","com","malaysia","kuala","lumpur","selangor","singapore","puchong","remote","hybrid","onsite","contract","contracts","contractor","permanent","full","part","time","sdn","bhd","berhad","inc","ltd","using","used","including","across","within","based","new","high","key","strong","excellent","good","ability","proven","results","driven","global","regional","apac","internal","external","various","multiple","daily","weekly","monthly","ongoing","effective","complex","large","scale","level","tier","first","second","end","ensure","ensuring","conduct","conducted","perform","performed","develop","deliver","drive","oversee","spearhead","liaise","resolve","prepare","analyze","validate","serve","contribute","leverage","navigate","align","overall","frontline","account","countries","netherlands","candidate","candidacy","interview","hiring","proposal","proposals"]);
-const VAGUE = new Set(["management","manager","managers","managing","managed","lead","leading","leader","leadership","senior","junior","specialist","specialists","analyst","analysts","associate","executive","officer","director","head","supervisor","coordinator","consultant","advisor","engineer","engineering","technician","representative","role","roles","team","teams","company","organization","department","business","operations","operational","support","supporting","service","services","system","systems","process","processes","project","projects","product","products","solution","solutions","application","applications","enterprise","technology","technologies","technical","data","report","reports","reporting","client","clients","customer","customers","stakeholder","stakeholders","vendor","vendors","quality","control","performance","productivity","strategy","strategic","development","analysis","analytical","review","reviews","training","coaching","monitoring","tracking","planning","delivery","implementation","implementations","improvement","improvements","excellence","problem","problems","solving","request","ticket","tickets","backlog","backlogs","desk","center","centre","production","environment","policy","policies","guidelines","procedures","requirements","standards","framework","model","tools","platforms","software","hardware","risk","risks","assessment","testing","remediation","documentation","office","suite","digital","literacy","thinking","attention","detail","privacy","core","history","background","backgrounds","source","wealth","funds","research","entity","structures","hierarchies","ultimate","beneficial","ratings","mitigation","strategies","programs","capability","metrics","resource","allocation","tasks","comprehensive","potential","findings","cases","case","workflow","forms","subject","matter","expert","due","anti","money","counter","enhanced","major","root","cause","periodic","bank","banking","international","institute","association","science","human","financial","crime","legal","adherence","landscapes","stability","routing","queue","shift","agreements","budget","cost","escalation","timelines","priorities","adverse","media","politically","exposed","persons","terrorist","financing","laundering","negara","allianz","petronas","standard","chartered","agtien","procurement","sourcing","marketing","sales"]);
-const BOILER = new Set(["project management","stakeholder management","team leadership","problem solving","analytical thinking","digital literacy","office suite","microsoft office","data privacy","privacy management","data analysis","quality control","process improvement","process improvements","operational excellence","resource allocation","performance metrics","training programs","system implementations","automation tools","research tools","remediation projects","data remediation","mitigation strategies","risk ratings","legal entity","entity structures","ownership hierarchies","ultimate beneficial","beneficial ownership","periodic review","periodic reviews","review process","internal policies","operational standards","politically exposed","exposed persons","adverse media","counter terrorist","terrorist financing","money laundering","anti money","bank negara","science technology","business administration","business owner","delivery center","data center","ticket backlogs","repeat incidents"]);
+const ALL_EXCLUDED_ROLES = [
+  "procurement", "strategic sourcing", "sourcing", "purchasing", "buyer", "merchandising",
+  "marketing", "deal desk", "sales", "telesales", "account executive", "business development",
+  "human resources", "recruiter", "talent acquisition", "payroll", "clinical", "nurse",
+  "medical", "pharmacy", "vendor onboarding", "factory", "warehouse", "driver",
+  "receptionist", "cashier", "retail", "audit", "tax", "accounts payable", "accounts receivable", "bookkeeper"
+];
 
-function buildFallbackProfile(cvText) {
-  const clean = (cvText || "").replace(/\b(?:EDUCATION|Education)\b[\s\S]{0,650}?(?=\b(?:CERTIFICATIONS|Certifications|SKILLS|Skills|COMPETENCIES|Competencies|TECHNICAL|Technical|LANGUAGES|Languages)\b|$)/g, " ");
-  const minC = clean.trim().split(/\s+/).length <= 120 ? 1 : 2;
+const STOP = new Set(["the","and","for","with","from","that","this","have","has","had","are","was","were","will","would","could","should","into","over","under","between","through","during","before","after","work","working","worked","experience","experiences","years","year","month","months","present","current","currently","education","university","college","degree","bachelor","master","diploma","certificate","certified","certification","certifications","skills","competencies","proficiency","summary","profile","professional","email","phone","address","linkedin","gmail","com","malaysia","kuala","lumpur","selangor","singapore","puchong","remote","hybrid","onsite","contract","contracts","contractor","permanent","full","part","time","sdn","bhd","berhad","inc","ltd","using","used","including","across","within","based","new","high","key","strong","excellent","good","ability","proven","results","driven","global","regional","apac","internal","external","various","multiple","daily","weekly","monthly","ongoing","effective","complex","large","scale","level","tier","first","second","end","ensure","ensuring","conduct","conducted","perform","performed","develop","deliver","drive","oversee","spearhead","liaise","resolve","prepare","analyze","validate","serve","contribute","leverage","navigate","align","overall","frontline","account","countries","netherlands","technology","technologies","data","system","systems","process","processes","business","company","organization","department","team","teams","role","roles","client","clients","customer","customers","stakeholder","stakeholders","vendor","vendors","report","reports","reporting","review","reviews","policy","policies","standard","standards","center","centre","desk","office","suite","digital","literacy","science","administration"]);
+
+const GENERIC_TITLES = new Set(["manager","management","lead","leader","leadership","senior","junior","specialist","specialists","analyst","analysts","associate","executive","officer","director","head","supervisor","coordinator","consultant","advisor","engineer","operations","operational","service","services","support","project","projects","product","products","application","applications","enterprise","technical","governance","delivery","transition","compliance","risk","financial","banking","bank"]);
+
+function buildProfile(cvText) {
+  const clean = (cvText || "").replace(/\b(?:EDUCATION|Education)\b[\s\S]{0,600}?(?=\b(?:CERTIFICATIONS|Certifications|SKILLS|Skills|COMPETENCIES|Competencies|TECHNICAL|Technical|LANGUAGES|Languages)\b|$)/g, " ");
+  const headerSample = clean.slice(0, 600).toLowerCase();
+  const excludedRoles = ALL_EXCLUDED_ROLES.filter((r) => !headerSample.includes(r));
+
   const clauses = clean.split(/[,.;:()\[\]\n\r•·|\/\\–—&]+/);
-  const wc = new Map(), bc = new Map(), us = new Map(), bs = new Map();
+  const wc = new Map(), bc = new Map(), scoreMap = new Map(), phraseScore = new Map();
+
   for (let c = 0; c < clauses.length; c++) {
     const hasLow = /[a-z]/.test(clauses[c]);
     const toks = clauses[c].replace(/[^A-Za-z0-9+#\s-]/g, " ").replace(/-/g, " ").split(/\s+/).filter((w) => w.length >= 3 && !/^\d+$/.test(w));
-    const boost = c < 8 ? 2 : 1;
+    const boost = c < 10 ? 3 : 1;
     for (let i = 0; i < toks.length; i++) {
       const rw = toks[i], w = rw.toLowerCase();
-      if (STOP.has(w)) continue;
+      if (STOP.has(w) || excludedRoles.includes(w)) continue;
       wc.set(w, (wc.get(w) || 0) + 1);
-      const isAcro = hasLow && (/^[A-Z]{2,6}$/.test(rw) || /^[A-Z][a-z]+[A-Z][A-Za-z0-9]*$/.test(rw));
-      if (!VAGUE.has(w) || isAcro) us.set(w, (us.get(w) || 0) + boost + (isAcro ? 3 : 0));
+      const isAcro = (hasLow && /^[A-Z]{2,6}$/.test(rw)) || /^[A-Z][a-z]+[A-Z][A-Za-z0-9]*$/.test(rw) || /^(itsm|itil|servicenow|dynatrace|citrix|aml|cdd|kyc|edd|sanctions|sla|cmdb|siem|soc|devops|aws|azure|sap|sql|python|java|react)$/i.test(w);
+      if (!GENERIC_TITLES.has(w) || isAcro) {
+        scoreMap.set(w, (scoreMap.get(w) || 0) + boost + (isAcro ? 5 : 0));
+      }
       if (i < toks.length - 1) {
         const w2 = toks[i + 1].toLowerCase();
         if (STOP.has(w2) || w === w2) continue;
         const bg = w + " " + w2;
-        if (BOILER.has(bg) || (w.length <= 4 && w2.length <= 4 && !VAGUE.has(w) && !VAGUE.has(w2))) continue;
+        if (excludedRoles.some((ex) => bg.includes(ex))) continue;
         bc.set(bg, (bc.get(bg) || 0) + 1);
-        bs.set(bg, (bs.get(bg) || 0) + boost);
+        phraseScore.set(bg, (phraseScore.get(bg) || 0) + boost + (GENERIC_TITLES.has(w) || GENERIC_TITLES.has(w2) ? 2 : 1));
       }
     }
   }
-  const uni = [...us.entries()].filter(([w, s]) => (wc.get(w) || 0) >= minC || s >= 4).sort((a, b) => b[1] - a[1]).map(([w]) => w);
-  const bi = [...bs.entries()].filter(([bg]) => (bc.get(bg) || 0) >= minC).sort((a, b) => b[1] - a[1]).map(([bg]) => bg);
-  const q = [];
-  for (let i = 0; i < Math.max(bi.length, uni.length); i++) {
-    if (bi[i] && !q.includes(bi[i])) q.push(bi[i]);
-    if (uni[i] && !q.includes(uni[i])) q.push(uni[i]);
+
+  const specificTerms = [...scoreMap.entries()].filter(([w, s]) => (wc.get(w) || 0) >= 2 || s >= 5).sort((a, b) => b[1] - a[1]).map(([w]) => w).slice(0, 20);
+  const rolePhrases = [...phraseScore.entries()].filter(([bg, s]) => (bc.get(bg) || 0) >= 2 || s >= 5).sort((a, b) => b[1] - a[1]).map(([bg]) => bg).slice(0, 20);
+  const roleWords = [...wc.keys()].filter((w) => GENERIC_TITLES.has(w) && (wc.get(w) || 0) >= 2);
+
+  const queries = [];
+  for (let i = 0; i < 8; i++) {
+    if (rolePhrases[i] && queries.length < 8) queries.push(rolePhrases[i]);
+    if (specificTerms[i] && queries.length < 8) queries.push(specificTerms[i]);
   }
-  const matchers = [...new Set([...uni, ...bi])].slice(0, 24);
-  return { searchQueries: q.length ? q.slice(0, 8) : ["Executive"], matchers };
+  return { queries: queries.length ? queries : ["Operations Manager"], specificTerms, rolePhrases, roleWords, excludedRoles };
 }
 
 function hasTerm(txt, term) {
-  const esc = term.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const esc = String(term || "").trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return esc ? new RegExp("(^|[^a-z0-9])" + esc + "($|[^a-z0-9])", "i").test(txt) : false;
 }
 
-function scoreFallback(job, fbProf) {
-  const roleBeforeHyphen = (job.title || "").split(/\s+[-–—]\s+/)[0].replace(/\([^)]*\)/g, " ").replace(/\[[^\]]*\]/g, " ").toLowerCase();
-  if (/\b(procurement|sourcing|purchasing|buyer|marketing|deal desk|sales|telesales|vendor onboarding|clinical|nurse|factory|production quality)\b/i.test(roleBeforeHyphen)) {
-    return { matchScore: 0, matchedSkills: [] };
+function isRoleMatch(job, prof) {
+  const fullTitle = (job.title || "").toLowerCase();
+  const cleanTitle = fullTitle.replace(/\([^)]*\)/g, " ").replace(/\[[^\]]*\]/g, " ");
+  const primaryTitlePart = cleanTitle.split(/\s+[-–—]\s+/)[0];
+  const snippet = (job.snippet || job.skills || "").toLowerCase();
+
+  for (const ex of prof.excludedRoles) {
+    if (hasTerm(cleanTitle, ex)) return { match: false, matchScore: 0, matchedSkills: [] };
   }
-  const tHits = fbProf.matchers.filter((m) => hasTerm(roleBeforeHyphen, m));
-  if (!tHits.length) return { matchScore: 0, matchedSkills: [] };
-  const hay = roleBeforeHyphen + " " + (job.snippet || "").toLowerCase();
-  const allHits = [...new Set([...tHits, ...fbProf.matchers.filter((m) => hasTerm(hay, m))])];
-  return { matchScore: Math.min(98, Math.round(70 + (allHits.length / 6) * 28)), matchedSkills: allHits.slice(0, 5).map((s) => s.toUpperCase()) };
+
+  const titlePhraseHits = prof.rolePhrases.filter((p) => hasTerm(primaryTitlePart, p));
+  const titleSpecHits = prof.specificTerms.filter((t) => hasTerm(primaryTitlePart, t));
+  const titleRoleHits = prof.roleWords.filter((w) => hasTerm(primaryTitlePart, w));
+
+  const snipPhraseHits = prof.rolePhrases.filter((p) => hasTerm(snippet, p));
+  const snipSpecHits = prof.specificTerms.filter((t) => hasTerm(snippet, t));
+
+  const hasDirectTitleMatch = titlePhraseHits.length > 0 || titleSpecHits.length > 0;
+  const hasContextualRoleMatch = titleRoleHits.length >= 1 && (snipSpecHits.length >= 1 || snipPhraseHits.length >= 1 || titleRoleHits.length >= 2);
+
+  if (!hasDirectTitleMatch && !hasContextualRoleMatch) {
+    return { match: false, matchScore: 0, matchedSkills: [] };
+  }
+
+  const badges = [...new Set([...titleSpecHits, ...titlePhraseHits, ...snipSpecHits, ...snipPhraseHits, ...titleRoleHits])]
+    .slice(0, 5)
+    .map((s) => s.toUpperCase());
+
+  const rawPoints = titleSpecHits.length * 10 + titlePhraseHits.length * 10 + snipSpecHits.length * 5 + snipPhraseHits.length * 4 + titleRoleHits.length * 3;
+  const matchScore = Math.min(98, Math.max(70, 68 + rawPoints));
+  return { match: true, matchScore, matchedSkills: badges };
 }
 
 function parseSal(s, loc) {
@@ -193,9 +242,9 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   const gKey = process.env.GEMINI_API_KEY, jKey = process.env.JOOBLE_API_KEY;
   if (!jKey) return [];
 
-  const fbProf = buildFallbackProfile(cvText);
+  const fbProf = buildProfile(cvText);
   const aiProf = cvText && gKey ? await extractProfileWithAI(cvText, gKey) : null;
-  const queries = (aiProf?.searchQueries || fbProf.searchQueries || ["Executive"]).slice(0, 8);
+  const queries = (aiProf?.searchQueries || fbProf.queries || ["Operations Manager"]).slice(0, 8);
   const raw = dedup((await Promise.all(queries.map((q) => queryJooble(q, loc, jKey)))).flat());
 
   const salJobs = raw.map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
@@ -207,11 +256,15 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   if (!cvText) {
     rel = salJobs.map((j) => ({ ...j, matchScore: null, matchedSkills: [] }));
   } else {
-    const aiMatches = aiProf && gKey ? await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey) : null;
+    const preFiltered = salJobs.filter((j) => {
+      const cleanTitle = (j.title || "").toLowerCase();
+      return !fbProf.excludedRoles.some((ex) => hasTerm(cleanTitle, ex));
+    });
+    const aiMatches = aiProf && gKey ? await evaluateJobsWithAI(cvText, aiProf, preFiltered, gKey) : null;
     if (aiMatches && aiMatches.length > 0) {
       rel = aiMatches;
     } else {
-      rel = salJobs.map((j) => ({ ...j, ...scoreFallback(j, fbProf) })).filter((j) => j.matchScore > 0);
+      rel = preFiltered.map((j) => ({ ...j, ...isRoleMatch(j, fbProf) })).filter((j) => j.match);
     }
   }
 
@@ -225,4 +278,4 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   return dated.slice(0, 25).map((j) => ({ ...j, broadenedFrom7d }));
 }
 
-module.exports = { filter, extractProfileWithAI, evaluateJobsWithAI, buildFallbackProfile, scoreFallback };
+module.exports = { filter, extractProfileWithAI, evaluateJobsWithAI, buildProfile, isRoleMatch };
