@@ -217,13 +217,7 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   const recentJobs = salJobs.filter((j) => dateOk(j, datePosted));
 
   let rel = await evaluateJobsWithAI(cvText, aiProf, recentJobs, gKey);
-  if (rel.length === 0 && recentJobs.length > 0) {
-    rel = recentJobs.slice(0, 10).map((j) => ({
-      ...j,
-      matchScore: 60,
-      matchedSkills: (aiProf.coreSkills || []).slice(0, 4).map((s) => String(s).toUpperCase())
-    }));
-  } console.log("DEBUG rel AI matched count:", rel.length);
+  // No fallback to unrelated jobs console.log("DEBUG rel AI matched count:", rel.length);
 
   let dated = rel.filter((j) => dateOk(j, datePosted));
   let broadenedFrom7d = false;
