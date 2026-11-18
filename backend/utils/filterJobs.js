@@ -97,7 +97,7 @@ async function evaluateJobsWithAI(cv, aiProf, jobs, key) {
     "Task:",
     "Evaluate the following job listings like a human hiring manager.",
     "1. SELECT ONLY jobs that genuinely belong to the candidate profession and career track.",
-    "2. STRICTLY REJECT jobs from unrelated professions (for example, if the candidate is in IT Service Management or AML Compliance, reject Procurement, Sourcing, Financial Accountant, Bookkeeping, Marketing, Sales, HR, Clinical, or Factory roles).",
+    "2. STRICTLY REJECT jobs with a seniority mismatch (e.g., if candidate is a Manager/Lead/Head, reject hands-on Support Engineer, L1/L2 Analyst, or Associate roles) AND reject unrelated professions (for example, if the candidate is in IT Service Management or AML Compliance, reject Procurement, Sourcing, Financial Accountant, Bookkeeping, Marketing, Sales, HR, Clinical, or Factory roles).",
     "3. Select all jobs that are reasonably related to the candidate field, industry, or transferable skills (even if the snippet is brief), and provide a realistic matchScore (55 to 98) and 2 to 5 specific domain matchedSkills (never use generic words like SENIOR or FINANCIAL alone as a skill badge).",
     "",
     "Return ONLY a valid JSON object (no markdown) in this exact format:",
@@ -158,7 +158,7 @@ async function queryJooble(keywords, location, key) {
     const r = await fetch("https://jooble.org/api/" + key.trim(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keywords, location, page: 1 }),
+      body: JSON.stringify({ keywords, location, page: 1, datecreatedfrom: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) }),
       signal: AbortSignal.timeout(8000)
     });
     const d = await r.json();
@@ -214,13 +214,13 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
     .map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
     .filter((j) => j.convertedSalary === 0 || (j.convertedSalary >= minSalary && j.convertedSalary <= maxSalary));
 
-  salJobs.sort((a, b) => (dateOk(b, "7d") ? 1 : 0) - (dateOk(a, "7d") ? 1 : 0));
+  const recentJobs = salJobs.filter((j) => dateOk(j, datePosted));
 
-  let rel = await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey);
-  if (rel.length === 0 && salJobs.length > 0) {
-    rel = salJobs.slice(0, 15).map((j) => ({
+  let rel = await evaluateJobsWithAI(cvText, aiProf, recentJobs, gKey);
+  if (rel.length === 0 && recentJobs.length > 0) {
+    rel = recentJobs.slice(0, 10).map((j) => ({
       ...j,
-      matchScore: 75,
+      matchScore: 60,
       matchedSkills: (aiProf.coreSkills || []).slice(0, 4).map((s) => String(s).toUpperCase())
     }));
   } console.log("DEBUG rel AI matched count:", rel.length);
