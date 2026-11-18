@@ -98,7 +98,7 @@ async function evaluateJobsWithAI(cv, aiProf, jobs, key) {
     "Evaluate the following job listings like a human hiring manager.",
     "1. SELECT ONLY jobs that genuinely belong to the candidate profession and career track.",
     "2. STRICTLY REJECT jobs from unrelated professions (for example, if the candidate is in IT Service Management or AML Compliance, reject Procurement, Sourcing, Financial Accountant, Bookkeeping, Marketing, Sales, HR, Clinical, or Factory roles).",
-    "3. For each selected job, provide a realistic matchScore (70 to 98) and 2 to 5 specific domain matchedSkills (never use generic words like SENIOR or FINANCIAL alone as a skill badge).",
+    "3. Select all jobs that are reasonably related to the candidate field, industry, or transferable skills (even if the snippet is brief), and provide a realistic matchScore (55 to 98) and 2 to 5 specific domain matchedSkills (never use generic words like SENIOR or FINANCIAL alone as a skill badge).",
     "",
     "Return ONLY a valid JSON object (no markdown) in this exact format:",
     '{ "matches": [ { "index": 0, "matchScore": 88, "matchedSkills": ["SKILL 1", "SKILL 2", "SKILL 3"] } ] }',
@@ -114,7 +114,7 @@ async function evaluateJobsWithAI(cv, aiProf, jobs, key) {
     .filter((m) => Boolean(batch[m.index]))
     .map((m) => ({
       ...batch[m.index],
-      matchScore: Math.min(98, Math.max(70, Number(m.matchScore) || 80)),
+      matchScore: Math.min(98, Math.max(55, Number(m.matchScore) || 75)),
       matchedSkills: (Array.isArray(m.matchedSkills) && m.matchedSkills.length ? m.matchedSkills : (aiProf.coreSkills || []).slice(0, 4))
         .slice(0, 5)
         .map((s) => String(s).toUpperCase())
@@ -216,7 +216,14 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
 
   salJobs.sort((a, b) => (dateOk(b, "7d") ? 1 : 0) - (dateOk(a, "7d") ? 1 : 0));
 
-  const rel = await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey); console.log("DEBUG rel AI matched count:", rel.length);
+  let rel = await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey);
+  if (rel.length === 0 && salJobs.length > 0) {
+    rel = salJobs.slice(0, 15).map((j) => ({
+      ...j,
+      matchScore: 75,
+      matchedSkills: (aiProf.coreSkills || []).slice(0, 4).map((s) => String(s).toUpperCase())
+    }));
+  } console.log("DEBUG rel AI matched count:", rel.length);
 
   let dated = rel.filter((j) => dateOk(j, datePosted));
   let broadenedFrom7d = false;
