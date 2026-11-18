@@ -1,471 +1,228 @@
-const FALLBACK_RATES = { USD: 1.0, MYR: 4.45, SGD: 1.34, EUR: 0.92, GBP: 0.79 };
-const FX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-let cachedRates = null;
-let lastFetchedAt = 0;
+const RATES = { USD: 1, MYR: 4.45, SGD: 1.34, EUR: 0.92, GBP: 0.79 };
+let fxCache = null, fxTs = 0;
+const joobleCache = new Map(), aiCache = new Map();
 
-const JOOBLE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const joobleCache = new Map();
-
-async function getExchangeRates() {
-  const now = Date.now();
-  if (cachedRates && now - lastFetchedAt < FX_CACHE_TTL_MS) return { rates: cachedRates, source: "24h-cache" };
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+async function getRates() {
+  if (fxCache && Date.now() - fxTs < 86400000) return { rates: fxCache, source: "24h-cache" };
   try {
-    const res = await fetch("https://api.frankfurter.app/latest?from=USD&to=MYR,SGD,EUR,GBP", { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!res.ok) throw new Error("FX HTTP " + res.status);
-    const data = await res.json();
-    cachedRates = { ...FALLBACK_RATES, ...(data.rates || {}), USD: 1.0 };
-    lastFetchedAt = now;
-    return { rates: cachedRates, source: "live-api" };
-  } catch {
-    clearTimeout(timeout);
-    return { rates: cachedRates || FALLBACK_RATES, source: cachedRates ? "stale-cache" : "fallback" };
+    const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=MYR,SGD,EUR,GBP", { signal: AbortSignal.timeout(4000) });
+    const d = await r.json();
+    fxCache = { ...RATES, ...(d.rates || {}), USD: 1 };
+    fxTs = Date.now();
+    return { rates: fxCache, source: "live-api" };
+  } catch { return { rates: fxCache || RATES, source: "fallback" }; }
+}
+
+function convSal(amt, from, to, rates) {
+  if (!amt || amt <= 0) return 0;
+  return Math.round((amt / (rates[(from || "USD").toUpperCase()] || 1)) * (rates[(to || "MYR").toUpperCase()] || 1));
+}
+
+async function askGemini(prompt, key) {
+  if (!key) return null;
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-goog-api-key": key.trim() },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!r.ok) {
+      console.error("Gemini HTTP Status:", r.status, (await r.text()).slice(0, 200));
+      return null;
+    }
+    const d = await r.json();
+    const parts = d?.candidates?.[0]?.content?.parts || [];
+    const txt = parts.map((p) => p.text || "").join("\n").replace(/```json|```/gi, "").trim();
+    const m = txt.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : null;
+  } catch (e) {
+    console.error("Gemini error:", e.message);
+    return null;
   }
 }
 
-function convertSalary(amount, fromCurrency, toCurrency, rates) {
-  if (!amount || amount <= 0) return 0;
-  const from = (fromCurrency || "USD").toUpperCase();
-  const to = (toCurrency || "MYR").toUpperCase();
-  return Math.round((amount / (rates[from] || 1.0)) * (rates[to] || 1.0));
+async function extractProfileWithAI(cv, key) {
+  const ck = cv.slice(0, 250) + "|" + cv.length;
+  if (aiCache.has(ck)) return aiCache.get(ck);
+  const p = "Return ONLY a valid JSON object (no markdown) with keys: \"primaryRole\" (1-sentence summary of candidate core profession), \"searchQueries\" (array of 6 strings: 4 job titles and 2 domain acronyms for this candidate), \"coreSkills\" (array of 12 domain skills/tools, never Contract, Remote, Technology, or Data Center unless primary profession). Resume: " + cv.slice(0, 3000);
+  const res = await askGemini(p, key);
+  if (res?.searchQueries?.length) { aiCache.set(ck, res); return res; }
+  return null;
 }
 
-// 1. Grammar, employment metadata (contract/remote/full-time), and resume boilerplate NEVER extracted
-const STOP_WORDS = new Set([
-  "the","and","for","with","from","that","this","have","has","had","are","was","were","been","being",
-  "will","would","could","should","can","may","might","must","into","over","under","above","below",
-  "between","through","during","before","after","each","other","such","only","same","than","too","very",
-  "just","also","well","both","all","any","more","most","some","many","work","working","worked",
-  "experience","experiences","years","year","month","months","present","current","currently","education",
-  "university","college","degree","bachelor","master","diploma","certificate","certified","certification",
-  "certifications","skills","competencies","proficiency","summary","profile","professional","references",
-  "available","upon","request","email","phone","address","linkedin","github","gmail","com","january",
-  "february","march","april","june","july","august","september","october","november","december",
-  "malaysia","kuala","lumpur","selangor","singapore","puchong","klang","cyberjaya","remote","hybrid",
-  "onsite","contract","contracts","contractor","permanent","temporary","freelance","full","part","time",
-  "sdn","bhd","berhad","inc","ltd","corp","group","hons","cgpa","awarded","distinction","using","used",
-  "including","across","within","based","new","high","key","strong","excellent","good","ability","proven",
-  "seasoned","results","driven","seeking","challenging","decade","global","regional","apac","emea","region",
-  "internal","external","various","multiple","daily","weekly","monthly","ongoing","clear","concise",
-  "documented","effective","effectively","closely","smoothly","properly","strict","strictly","complex",
-  "large","scale","level","tier","first","second","end","ensure","ensuring","conduct","conducted",
-  "perform","performed","develop","developed","deliver","delivered","drive","driving","oversee",
-  "spearhead","liaise","resolve","prepare","analyze","validate","serve","contribute","leverage",
-  "navigate","align","evolving","existing","enhancing","overall","progressing","frontline","account",
-  "accounts","countries","netherlands","candidate","candidacy","candidates","interview","interviews",
-  "hiring","hire","hires","proposal","proposals","dynamic","opportunity","opportunities","fair",
-  "detailed","submit","video","followed","upcoming","stable","internet","connection","billion","fortune"
-]);
-
-// 2. Vague rank/corporate words: blocked as 1-word matches, but allowed inside 2-word phrases (e.g. "service desk", "product manager")
-const VAGUE_SINGLE_WORDS = new Set([
-  "management","manager","managers","managing","managed","lead","leading","leader","leadership","senior",
-  "junior","specialist","specialists","analyst","analysts","associate","executive","officer","director",
-  "head","supervisor","coordinator","consultant","advisor","engineer","engineering","technician",
-  "representative","assistant","intern","trainee","partner","owner","owners","ownership","member",
-  "members","role","roles","team","teams","company","organization","department","division","unit",
-  "business","operations","operational","support","supporting","supported","service","services","system",
-  "systems","process","processes","project","projects","product","products","solution","solutions",
-  "application","applications","enterprise","technology","technologies","technical","data","report",
-  "reports","reporting","client","clients","customer","customers","stakeholder","stakeholders","vendor",
-  "vendors","quality","control","performance","productivity","strategy","strategic","development",
-  "analysis","analytical","review","reviews","training","coaching","monitoring","tracking","planning",
-  "delivery","implementation","implementations","improvement","improvements","excellence","problem",
-  "problems","solving","request","requests","ticket","tickets","backlog","backlogs","desk","center",
-  "centre","production","environment","environments","policy","policies","guidelines","procedures",
-  "requirements","standards","framework","model","tools","platforms","software","hardware","risk",
-  "risks","assessment","testing","remediation","documentation","office","suite","digital","literacy",
-  "thinking","attention","detail","privacy","core","history","background","backgrounds","source",
-  "wealth","funds","research","entity","structures","hierarchies","ultimate","beneficial","ratings",
-  "mitigation","strategies","programs","capability","metrics","effort","counts","optimize","resource",
-  "allocation","tasks","comprehensive","potential","findings","recommending","summarizing","cases",
-  "case","workflow","forms","subject","matter","expert","sme","due","anti","money","counter","enhanced",
-  "major","root","cause","periodic","bank","banking","international","institute","association","science",
-  "sciences","human","financial","crime","legal","adherence","landscapes","stability","routing","floor",
-  "queue","queues","shift","shifts","agreements","budget","budgets","cost","fixed","independent",
-  "escalation","escalated","timelines","timeline","priorities","assign","targeted","red","flags",
-  "adverse","media","politically","exposed","persons","terrorist","financing","laundering","negara"
-]);
-
-// 3. Soft-skill / generic bigrams that should never drive searches or title matches
-const BOILERPLATE_BIGRAMS = new Set([
-  "project management","stakeholder management","team leadership","problem solving","analytical thinking",
-  "digital literacy","office suite","microsoft office","data privacy","privacy management","data analysis",
-  "quality control","process improvement","process improvements","operational excellence","resource allocation",
-  "performance metrics","performance feedback","training programs","system implementations","automation tools",
-  "research tools","remediation projects","data remediation","mitigation strategies","risk ratings",
-  "legal entity","entity structures","ownership hierarchies","ultimate beneficial","beneficial ownership",
-  "periodic review","periodic reviews","review process","internal policies","operational standards",
-  "politically exposed","exposed persons","adverse media","counter terrorist","terrorist financing",
-  "money laundering","anti money","bank negara","asian institute","chartered bankers","science technology",
-  "business administration","business owner","delivery center","ticket backlogs","repeat incidents",
-  "customer backgrounds","tax documentation","assessment reports","bnm guidelines","mas guidelines",
-  "regulatory requirements","regulatory landscapes","strategic compliance","compliance initiatives",
-  "cdd procedures","cdd platforms","cdd tasks","aml analysts","senior cdd","customer due","enhanced due"
-]);
-
-function stripEducationSection(cvText) {
-  return (cvText || "").replace(
-    /\b(?:EDUCATION|Education)\b[\s\S]{0,650}?(?=\b(?:CERTIFICATIONS|Certifications|SKILLS|Skills|COMPETENCIES|Competencies|TECHNICAL|Technical|LANGUAGES|Languages|PROJECTS|Projects)\b|$)/g,
-    " "
-  );
+async function evaluateJobsWithAI(cv, prof, jobs, key) {
+  if (!jobs?.length) return null;
+  const batch = jobs.slice(0, 35);
+  const list = batch.map((j, index) => ({ index, title: j.title, company: j.company, snippet: (j.snippet || "").slice(0, 160) }));
+  const p = "Candidate Role: " + (prof.primaryRole || "") + ". Skills: " + (prof.coreSkills || []).join(", ") + ". Reject any job from a different career track (reject Procurement, Sourcing, Deal Desk, Marketing, Sales, HR, Clinical, Vendor Onboarding clerical, or Factory roles unless that is the candidate primary profession). Return ONLY JSON: {\"matches\": [{\"index\": number, \"matchScore\": 68-98, \"matchedSkills\": [\"2-5 UPPERCASE SKILL BADGES\"]}]}. Jobs: " + JSON.stringify(list);
+  const res = await askGemini(p, key);
+  if (!Array.isArray(res?.matches)) return null;
+  return res.matches.filter((m) => batch[m.index]).map((m) => ({
+    ...batch[m.index],
+    matchScore: Math.min(98, Math.max(65, Number(m.matchScore) || 75)),
+    matchedSkills: (m.matchedSkills || prof.coreSkills || []).slice(0, 5).map((s) => String(s).toUpperCase())
+  }));
 }
 
-// Strip parenthetical metadata like "(Remote, Contract)" or "[APAC]" from job titles before matching
-function getCoreJobTitle(rawTitle) {
-  return (rawTitle || "")
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/\[[^\]]*\]/g, " ")
-    .replace(/\b(remote|hybrid|onsite|contract|contractor|permanent|temporary|freelance|full[- ]?time|part[- ]?time|apac|emea|malaysia|singapore|kuala lumpur|selangor)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
+const STOP = new Set(["the","and","for","with","from","that","this","have","has","had","are","was","were","will","would","could","should","into","over","under","between","through","during","before","after","work","working","worked","experience","experiences","years","year","month","months","present","current","currently","education","university","college","degree","bachelor","master","diploma","certificate","certified","certification","certifications","skills","competencies","proficiency","summary","profile","professional","email","phone","address","linkedin","gmail","com","malaysia","kuala","lumpur","selangor","singapore","puchong","remote","hybrid","onsite","contract","contracts","contractor","permanent","full","part","time","sdn","bhd","berhad","inc","ltd","using","used","including","across","within","based","new","high","key","strong","excellent","good","ability","proven","results","driven","global","regional","apac","internal","external","various","multiple","daily","weekly","monthly","ongoing","effective","complex","large","scale","level","tier","first","second","end","ensure","ensuring","conduct","conducted","perform","performed","develop","deliver","drive","oversee","spearhead","liaise","resolve","prepare","analyze","validate","serve","contribute","leverage","navigate","align","overall","frontline","account","countries","netherlands","candidate","candidacy","interview","hiring","proposal","proposals"]);
+const VAGUE = new Set(["management","manager","managers","managing","managed","lead","leading","leader","leadership","senior","junior","specialist","specialists","analyst","analysts","associate","executive","officer","director","head","supervisor","coordinator","consultant","advisor","engineer","engineering","technician","representative","role","roles","team","teams","company","organization","department","business","operations","operational","support","supporting","service","services","system","systems","process","processes","project","projects","product","products","solution","solutions","application","applications","enterprise","technology","technologies","technical","data","report","reports","reporting","client","clients","customer","customers","stakeholder","stakeholders","vendor","vendors","quality","control","performance","productivity","strategy","strategic","development","analysis","analytical","review","reviews","training","coaching","monitoring","tracking","planning","delivery","implementation","implementations","improvement","improvements","excellence","problem","problems","solving","request","ticket","tickets","backlog","backlogs","desk","center","centre","production","environment","policy","policies","guidelines","procedures","requirements","standards","framework","model","tools","platforms","software","hardware","risk","risks","assessment","testing","remediation","documentation","office","suite","digital","literacy","thinking","attention","detail","privacy","core","history","background","backgrounds","source","wealth","funds","research","entity","structures","hierarchies","ultimate","beneficial","ratings","mitigation","strategies","programs","capability","metrics","resource","allocation","tasks","comprehensive","potential","findings","cases","case","workflow","forms","subject","matter","expert","due","anti","money","counter","enhanced","major","root","cause","periodic","bank","banking","international","institute","association","science","human","financial","crime","legal","adherence","landscapes","stability","routing","queue","shift","agreements","budget","cost","escalation","timelines","priorities","adverse","media","politically","exposed","persons","terrorist","financing","laundering","negara","allianz","petronas","standard","chartered","agtien","procurement","sourcing","marketing","sales"]);
+const BOILER = new Set(["project management","stakeholder management","team leadership","problem solving","analytical thinking","digital literacy","office suite","microsoft office","data privacy","privacy management","data analysis","quality control","process improvement","process improvements","operational excellence","resource allocation","performance metrics","training programs","system implementations","automation tools","research tools","remediation projects","data remediation","mitigation strategies","risk ratings","legal entity","entity structures","ownership hierarchies","ultimate beneficial","beneficial ownership","periodic review","periodic reviews","review process","internal policies","operational standards","politically exposed","exposed persons","adverse media","counter terrorist","terrorist financing","money laundering","anti money","bank negara","science technology","business administration","business owner","delivery center","data center","ticket backlogs","repeat incidents"]);
 
-function buildResumeProfile(cvText) {
-  if (!cvText || !cvText.trim()) {
-    return { searchQueries: ["Executive"], skillKeywords: [], titleMatchers: [] };
-  }
-
-  const workingText = stripEducationSection(cvText);
-  const totalWords = workingText.trim().split(/\s+/).length;
-  const minCount = totalWords <= 120 ? 1 : 2;
-  const rawClauses = workingText.split(/[,.;:()\[\]\n\r•·|\/\\–—&]+/);
-
-  const wordCounts = new Map();
-  const bigramCounts = new Map();
-  const unigramScores = new Map();
-  const bigramScores = new Map();
-
-  for (let cIdx = 0; cIdx < rawClauses.length; cIdx++) {
-    const rawClause = rawClauses[cIdx];
-    const hasLowercase = /[a-z]/.test(rawClause);
-    const rawTokens = rawClause
-      .replace(/[^A-Za-z0-9+#\s-]/g, " ")
-      .replace(/-/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !/^\d+$/.test(w));
-
-    const boost = cIdx < 8 ? 2 : 1;
-
-    for (let i = 0; i < rawTokens.length; i++) {
-      const rawW = rawTokens[i];
-      const w = rawW.toLowerCase();
-      if (STOP_WORDS.has(w)) continue;
-
-      wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
-
-      // Detect true uppercase acronyms (e.g. ITSM, ITIL, AML, CDD, KYC, FATCA) or CamelCase tools (ServiceNow)
-      const isExplicitAcronymOrTool =
-        hasLowercase && (/^[A-Z]{2,6}$/.test(rawW) || /^[A-Z][a-z]+[A-Z][A-Za-z0-9]*$/.test(rawW));
-
-      if (!VAGUE_SINGLE_WORDS.has(w) || isExplicitAcronymOrTool) {
-        const acronymBoost = isExplicitAcronymOrTool ? 3 : 0;
-        unigramScores.set(w, (unigramScores.get(w) || 0) + boost + acronymBoost);
-      }
-
-      if (i < rawTokens.length - 1) {
-        const w2 = rawTokens[i + 1].toLowerCase();
-        if (STOP_WORDS.has(w2) || w === w2) continue;
-
-        const bigram = w + " " + w2;
-        if (BOILERPLATE_BIGRAMS.has(bigram)) continue;
-
-        const bothShortAcronyms =
-          w.length <= 4 && w2.length <= 4 && !VAGUE_SINGLE_WORDS.has(w) && !VAGUE_SINGLE_WORDS.has(w2);
-        if (bothShortAcronyms) continue;
-
-        bigramCounts.set(bigram, (bigramCounts.get(bigram) || 0) + 1);
-        bigramScores.set(bigram, (bigramScores.get(bigram) || 0) + boost);
+function buildFallbackProfile(cvText) {
+  const clean = (cvText || "").replace(/\b(?:EDUCATION|Education)\b[\s\S]{0,650}?(?=\b(?:CERTIFICATIONS|Certifications|SKILLS|Skills|COMPETENCIES|Competencies|TECHNICAL|Technical|LANGUAGES|Languages)\b|$)/g, " ");
+  const minC = clean.trim().split(/\s+/).length <= 120 ? 1 : 2;
+  const clauses = clean.split(/[,.;:()\[\]\n\r•·|\/\\–—&]+/);
+  const wc = new Map(), bc = new Map(), us = new Map(), bs = new Map();
+  for (let c = 0; c < clauses.length; c++) {
+    const hasLow = /[a-z]/.test(clauses[c]);
+    const toks = clauses[c].replace(/[^A-Za-z0-9+#\s-]/g, " ").replace(/-/g, " ").split(/\s+/).filter((w) => w.length >= 3 && !/^\d+$/.test(w));
+    const boost = c < 8 ? 2 : 1;
+    for (let i = 0; i < toks.length; i++) {
+      const rw = toks[i], w = rw.toLowerCase();
+      if (STOP.has(w)) continue;
+      wc.set(w, (wc.get(w) || 0) + 1);
+      const isAcro = hasLow && (/^[A-Z]{2,6}$/.test(rw) || /^[A-Z][a-z]+[A-Z][A-Za-z0-9]*$/.test(rw));
+      if (!VAGUE.has(w) || isAcro) us.set(w, (us.get(w) || 0) + boost + (isAcro ? 3 : 0));
+      if (i < toks.length - 1) {
+        const w2 = toks[i + 1].toLowerCase();
+        if (STOP.has(w2) || w === w2) continue;
+        const bg = w + " " + w2;
+        if (BOILER.has(bg) || (w.length <= 4 && w2.length <= 4 && !VAGUE.has(w) && !VAGUE.has(w2))) continue;
+        bc.set(bg, (bc.get(bg) || 0) + 1);
+        bs.set(bg, (bs.get(bg) || 0) + boost);
       }
     }
   }
-
-  // 1. Recurring Domain Terms & Acronyms (e.g. itsm, servicenow, itil, dynatrace, incident, aml, cdd, kyc, compliance, diligence, onboarding)
-  const domainUnigrams = [...unigramScores.entries()]
-    .filter(([w, score]) => (wordCounts.get(w) || 0) >= minCount || score >= 4)
-    .sort((a, b) => b[1] - a[1])
-    .map(([w]) => w);
-
-  // 2. Recurring 2-Word Role & Discipline Phrases (e.g. service management, service delivery, problem manager, product manager, due diligence, financial crime)
-  const domainBigrams = [...bigramScores.entries()]
-    .filter(([bg]) => {
-      if ((bigramCounts.get(bg) || 0) >= minCount) return true;
-      const [w1, w2] = bg.split(" ");
-      return (wordCounts.get(w1) || 0) >= 2 && (wordCounts.get(w2) || 0) >= 2;
-    })
-    .sort((a, b) => b[1] - a[1])
-    .map(([bg]) => bg);
-
-  // 3. Interleave top Role Phrases and top Domain Terms for Jooble search queries
-  const searchQueries = [];
-  const maxLen = Math.max(domainBigrams.length, domainUnigrams.length);
-  for (let i = 0; i < maxLen; i++) {
-    if (domainBigrams[i] && !searchQueries.includes(domainBigrams[i])) searchQueries.push(domainBigrams[i]);
-    if (domainUnigrams[i] && !searchQueries.includes(domainUnigrams[i])) searchQueries.push(domainUnigrams[i]);
+  const uni = [...us.entries()].filter(([w, s]) => (wc.get(w) || 0) >= minC || s >= 4).sort((a, b) => b[1] - a[1]).map(([w]) => w);
+  const bi = [...bs.entries()].filter(([bg]) => (bc.get(bg) || 0) >= minC).sort((a, b) => b[1] - a[1]).map(([bg]) => bg);
+  const q = [];
+  for (let i = 0; i < Math.max(bi.length, uni.length); i++) {
+    if (bi[i] && !q.includes(bi[i])) q.push(bi[i]);
+    if (uni[i] && !q.includes(uni[i])) q.push(uni[i]);
   }
-  if (searchQueries.length === 0) searchQueries.push("Executive");
-
-  const skillKeywords = [...new Set([...domainUnigrams, ...domainBigrams])].slice(0, 26);
-  const titleMatchers = [...new Set([...domainUnigrams, ...domainBigrams])];
-
-  return { searchQueries: searchQueries.slice(0, 8), skillKeywords, titleMatchers };
+  const matchers = [...new Set([...uni, ...bi])].slice(0, 24);
+  return { searchQueries: q.length ? q.slice(0, 8) : ["Executive"], matchers };
 }
 
-function extractResumeKeywords(cvText) {
-  return buildResumeProfile(cvText).searchQueries;
+function hasTerm(txt, term) {
+  const esc = term.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return esc ? new RegExp("(^|[^a-z0-9])" + esc + "($|[^a-z0-9])", "i").test(txt) : false;
 }
 
-function parseJoobleSalary(salaryStr, locationStr) {
-  if (!salaryStr || typeof salaryStr !== "string") return { amount: 0, currency: "MYR" };
-  const lower = salaryStr.toLowerCase();
-  let currency = "USD";
-  if (lower.includes("rm") || lower.includes("myr") || (locationStr || "").toLowerCase().includes("malaysia")) currency = "MYR";
-  else if (lower.includes("s$") || lower.includes("sgd") || (locationStr || "").toLowerCase().includes("singapore")) currency = "SGD";
-  else if (lower.includes("€") || lower.includes("eur")) currency = "EUR";
-  else if (lower.includes("£") || lower.includes("gbp")) currency = "GBP";
+function scoreFallback(job, fbProf) {
+  const roleBeforeHyphen = (job.title || "").split(/\s+[-–—]\s+/)[0].replace(/\([^)]*\)/g, " ").replace(/\[[^\]]*\]/g, " ").toLowerCase();
+  if (/\b(procurement|sourcing|purchasing|buyer|marketing|deal desk|sales|telesales|vendor onboarding|clinical|nurse|factory|production quality)\b/i.test(roleBeforeHyphen)) {
+    return { matchScore: 0, matchedSkills: [] };
+  }
+  const tHits = fbProf.matchers.filter((m) => hasTerm(roleBeforeHyphen, m));
+  if (!tHits.length) return { matchScore: 0, matchedSkills: [] };
+  const hay = roleBeforeHyphen + " " + (job.snippet || "").toLowerCase();
+  const allHits = [...new Set([...tHits, ...fbProf.matchers.filter((m) => hasTerm(hay, m))])];
+  return { matchScore: Math.min(98, Math.round(70 + (allHits.length / 6) * 28)), matchedSkills: allHits.slice(0, 5).map((s) => s.toUpperCase()) };
+}
 
-  const nums = salaryStr.match(/\d[\d,.]*/g);
-  if (!nums || nums.length === 0) return { amount: 0, currency };
-  const parsedNums = nums.map((n) => Number(n.replace(/,/g, ""))).filter((n) => !isNaN(n) && n > 0);
-  if (parsedNums.length === 0) return { amount: 0, currency };
-
-  let avg = parsedNums.reduce((a, b) => a + b, 0) / parsedNums.length;
-  if (lower.includes("hour") || lower.includes("/hr")) avg *= 160;
-  else if (lower.includes("day") || lower.includes("/day")) avg *= 22;
-  else if (lower.includes("year") || lower.includes("annum") || lower.includes("/yr") || avg > 45000) avg /= 12;
+function parseSal(s, loc) {
+  if (!s || typeof s !== "string") return { amount: 0, currency: "MYR" };
+  const l = s.toLowerCase(), lc = (loc || "").toLowerCase();
+  const currency = l.includes("rm") || l.includes("myr") || lc.includes("malaysia") ? "MYR" : l.includes("s$") || l.includes("sgd") || lc.includes("singapore") ? "SGD" : l.includes("eur") ? "EUR" : l.includes("gbp") ? "GBP" : "USD";
+  const nums = (s.match(/\d[\d,.]*/g) || []).map((n) => Number(n.replace(/,/g, ""))).filter((n) => n > 0);
+  if (!nums.length) return { amount: 0, currency };
+  let avg = nums.reduce((a, b) => a + b, 0) / nums.length;
+  if (l.includes("hour") || l.includes("/hr")) avg *= 160;
+  else if (l.includes("day") || l.includes("/day")) avg *= 22;
+  else if (l.includes("year") || l.includes("annum") || l.includes("/yr") || avg > 45000) avg /= 12;
   return { amount: Math.round(avg), currency };
 }
 
-function stripHtml(html) {
-  return (html || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
-}
-
-function formatPostedAgo(updatedIso) {
-  if (!updatedIso) return "Recent";
-  const ts = Date.parse(updatedIso);
+function ago(iso) {
+  const ts = Date.parse(iso || "");
   if (isNaN(ts)) return "Recent";
-  const diffHours = Math.max(1, Math.floor((Date.now() - ts) / (1000 * 60 * 60)));
-  if (diffHours < 24) return diffHours + "h ago";
-  const diffDays = Math.floor(diffHours / 24);
-  return diffDays === 1 ? "1d ago" : diffDays + "d ago";
+  const h = Math.max(1, Math.floor((Date.now() - ts) / 3600000));
+  return h < 24 ? h + "h ago" : Math.floor(h / 24) + "d ago";
 }
 
-async function resolveDirectApplyUrl(rawLink, title, company, location) {
-  const cleanQuery = encodeURIComponent(title + " " + (company !== "Verified Employer" ? company : "") + " " + location.trim());
-  const googleJobsFallback = "https://www.google.com/search?q=" + cleanQuery + "+jobs&ibp=htl;jobs";
-  if (!rawLink || rawLink === "#") return { url: googleJobsFallback, isDirect: false };
-  if (!rawLink.includes("jooble.org")) return { url: rawLink, isDirect: true };
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1800);
-  try {
-    const res = await fetch(rawLink, {
-      method: "GET",
-      redirect: "manual",
-      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const locHeader = res.headers.get("location");
-    if (locHeader && locHeader.startsWith("http") && !locHeader.includes("jooble.org")) return { url: locHeader, isDirect: true };
-  } catch {
-    clearTimeout(timeout);
-  }
-  return { url: googleJobsFallback, isDirect: false };
-}
-
-function deduplicateJobs(jobs) {
+function dedup(jobs) {
   const seen = new Map();
-  for (const job of jobs) {
-    const normTitle = (job.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const normCompany = (job.company || "").toLowerCase().replace(/\b(sdn|bhd|pte|ltd|inc|llc|corp|group|malaysia|singapore)\b/g, "").replace(/[^a-z0-9]/g, "");
-    const key = normTitle + "|" + normCompany;
-    if (!seen.has(key)) seen.set(key, job);
-    else if (seen.get(key).salary === 0 && job.salary > 0) seen.set(key, job);
+  for (const j of jobs) {
+    const k = (j.title || "").toLowerCase().replace(/[^a-z0-9]/g, "") + "|" + (j.company || "").toLowerCase().replace(/\b(sdn|bhd|pte|ltd|inc|llc|corp|group|malaysia|singapore)\b/g, "").replace(/[^a-z0-9]/g, "");
+    if (!seen.has(k) || (seen.get(k).salary === 0 && j.salary > 0)) seen.set(k, j);
   }
-  return Array.from(seen.values());
+  return [...seen.values()];
 }
 
-async function queryJoobleOnce(cleanKeywords, cleanLocation, apiKey) {
-  const cacheKey = cleanKeywords.toLowerCase() + "|" + cleanLocation.toLowerCase();
-  const now = Date.now();
-  const cached = joobleCache.get(cacheKey);
-  if (cached && now - cached.timestamp < JOOBLE_CACHE_TTL_MS) return cached.jobs;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+async function queryJooble(keywords, location, key) {
+  const ck = keywords.toLowerCase() + "|" + location.toLowerCase();
+  const c = joobleCache.get(ck);
+  if (c && Date.now() - c.ts < 21600000) return c.jobs;
   try {
-    const res = await fetch("https://jooble.org/api/" + apiKey, {
+    const r = await fetch("https://jooble.org/api/" + key.trim(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keywords: cleanKeywords, location: cleanLocation, page: 1 }),
-      signal: controller.signal,
+      body: JSON.stringify({ keywords, location, page: 1 }),
+      signal: AbortSignal.timeout(8000)
     });
-    clearTimeout(timeout);
-    if (!res.ok) throw new Error("Jooble HTTP " + res.status);
-    const data = await res.json();
-    const rawJobs = Array.isArray(data.jobs) ? data.jobs : [];
-
-    const dedupedRaw = deduplicateJobs(
-      rawJobs.map((item, idx) => {
-        const cleanSnippet = stripHtml(item.snippet);
-        const { amount, currency } = parseJoobleSalary(item.salary, item.location || cleanLocation);
-        const loc = item.location || cleanLocation;
-        const title = item.title || "Open Position";
-        const company = item.company || item.source || "Verified Employer";
-        const linkedinSearchUrl = "https://www.linkedin.com/jobs/search/?keywords=" + encodeURIComponent(title + " " + company) + "&location=" + encodeURIComponent(loc);
-        return {
-          id: item.id || "jooble-" + idx + "-" + Date.now(),
-          title,
-          company,
-          location: loc,
-          salary: amount,
-          rawSalaryText: item.salary || "",
-          currency,
-          skills: cleanSnippet.slice(0, 180),
-          snippet: cleanSnippet,
-          rawLink: item.link || "#",
-          applyUrl: item.link || "#",
-          apply_url: item.link || "#",
-          linkedinSearchUrl,
-          source: item.source || "Jooble Live",
-          updatedAt: item.updated || null,
-          postedAgo: formatPostedAgo(item.updated),
-        };
-      })
-    );
-
-    if (dedupedRaw.length > 0) joobleCache.set(cacheKey, { timestamp: now, jobs: dedupedRaw });
-    return dedupedRaw;
-  } catch (err) {
-    clearTimeout(timeout);
-    console.error("Jooble API error:", err.message);
-    return [];
-  }
+    const d = await r.json();
+    const jobs = dedup((d.jobs || []).map((it, i) => {
+      const snip = (it.snippet || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+      const loc = it.location || location, title = it.title || "Open Position", company = it.company || it.source || "Verified Employer";
+      const { amount, currency } = parseSal(it.salary, loc);
+      return {
+        id: it.id || "jb-" + i + "-" + Date.now(), title, company, location: loc, salary: amount, rawSalaryText: it.salary || "", currency,
+        skills: snip.slice(0, 180), snippet: snip, rawLink: it.link || "#", applyUrl: it.link || "#", apply_url: it.link || "#",
+        linkedinSearchUrl: "https://www.linkedin.com/jobs/search/?keywords=" + encodeURIComponent(title + " " + company) + "&location=" + encodeURIComponent(loc),
+        source: it.source || "Jooble Live", updatedAt: it.updated || null, postedAgo: ago(it.updated)
+      };
+    }));
+    if (jobs.length) joobleCache.set(ck, { ts: Date.now(), jobs });
+    return jobs;
+  } catch { return []; }
 }
 
-async function fetchLiveJoobleJobs(searchQueries, location) {
-  const apiKey = process.env.JOOBLE_API_KEY;
-  if (!apiKey) return [];
-  const cleanLocation = (location || "Malaysia").trim();
-  const queries = (searchQueries || []).slice(0, 8);
-  if (queries.length === 0) queries.push("Executive");
-
-  const responses = await Promise.all(queries.map((q) => queryJoobleOnce(q, cleanLocation, apiKey)));
-  const combined = responses.flatMap((r) => r || []);
-  return combined.length > 0 ? deduplicateJobs(combined) : [];
-}
-
-function matchesDateFilter(job, datePosted) {
-  if (!datePosted || datePosted === "all" || !job.updatedAt) return true;
-  const ts = Date.parse(job.updatedAt);
+function dateOk(j, dp) {
+  if (!dp || dp === "all" || !j.updatedAt) return true;
+  const ts = Date.parse(j.updatedAt);
   if (isNaN(ts)) return true;
-  const ageMs = Date.now() - ts;
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (datePosted === "24h") return ageMs <= dayMs;
-  if (datePosted === "7d") return ageMs <= 7 * dayMs;
-  return true;
-}
-
-function containsTerm(text, term) {
-  const cleanTerm = term.trim().toLowerCase();
-  if (!cleanTerm) return false;
-  const escaped = cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp("(^|[^a-z0-9])" + escaped + "($|[^a-z0-9])", "i").test(text);
-}
-
-function scoreLiveJobAgainstCV(job, profileOrKeywords, cvText = "") {
-  const profile = (!profileOrKeywords || Array.isArray(profileOrKeywords))
-    ? buildResumeProfile(cvText || (profileOrKeywords || []).join(" "))
-    : profileOrKeywords;
-
-  const { skillKeywords, titleMatchers } = profile;
-  if (!skillKeywords || skillKeywords.length === 0) return { matchScore: null, matchedSkills: [] };
-
-  // Strip parenthetical metadata like "(Remote, Contract)" from the job title first
-  const coreTitle = getCoreJobTitle(job.title);
-  const snippetLower = (job.snippet || job.skills || "").toLowerCase();
-  const haystack = coreTitle + " " + snippetLower;
-
-  // The Core Job Title MUST match at least one domain term or 2-word role phrase from the resume
-  const titleMatches = titleMatchers.filter((tm) => containsTerm(coreTitle, tm));
-  if (titleMatches.length === 0) {
-    return { matchScore: 0, matchedSkills: [] };
-  }
-
-  const matched = skillKeywords.filter((kw) => containsTerm(haystack, kw));
-  const badges = [...new Set([...titleMatches, ...matched])];
-  const ratio = badges.length / Math.min(skillKeywords.length, 6);
-  const matchScore = Math.min(98, Math.round(68 + ratio * 30));
-
-  return {
-    matchScore,
-    matchedSkills: badges.slice(0, 6).map((s) => s.toUpperCase()),
-  };
+  const age = Date.now() - ts;
+  return dp === "24h" ? age <= 86400000 : dp === "7d" ? age <= 604800000 : true;
 }
 
 async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "", currency = "MYR", datePosted = "7d") {
-  const { rates, source } = await getExchangeRates();
-  const cvText = cv.trim();
-  const targetCurrency = (currency || "MYR").toUpperCase();
-  const profile = buildResumeProfile(cvText);
-  const searchLocation = location.trim() || "Malaysia";
+  const { rates, source } = await getRates();
+  const cvText = (cv || "").trim(), cur = (currency || "MYR").toUpperCase(), loc = (location || "").trim() || "Malaysia";
+  const gKey = process.env.GEMINI_API_KEY, jKey = process.env.JOOBLE_API_KEY;
+  if (!jKey) return [];
 
-  const jobs = await fetchLiveJoobleJobs(profile.searchQueries, searchLocation);
+  const fbProf = buildFallbackProfile(cvText);
+  const aiProf = cvText && gKey ? await extractProfileWithAI(cvText, gKey) : null;
+  const queries = (aiProf?.searchQueries || fbProf.searchQueries || ["Executive"]).slice(0, 8);
+  const raw = dedup((await Promise.all(queries.map((q) => queryJooble(q, loc, jKey)))).flat());
 
-  const relevantJobs = [];
-  for (const job of jobs) {
-    const convertedSalary = convertSalary(job.salary, job.currency, targetCurrency, rates);
-    if (convertedSalary > 0) {
-      if (minSalary > 0 && convertedSalary < minSalary) continue;
-      if (convertedSalary > maxSalary) continue;
+  const salJobs = raw.map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
+    .filter((j) => j.convertedSalary === 0 || (j.convertedSalary >= minSalary && j.convertedSalary <= maxSalary));
+
+  salJobs.sort((a, b) => (dateOk(b, "7d") ? 1 : 0) - (dateOk(a, "7d") ? 1 : 0));
+
+  let rel = [];
+  if (!cvText) {
+    rel = salJobs.map((j) => ({ ...j, matchScore: null, matchedSkills: [] }));
+  } else {
+    const aiMatches = aiProf && gKey ? await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey) : null;
+    if (aiMatches && aiMatches.length > 0) {
+      rel = aiMatches;
+    } else {
+      rel = salJobs.map((j) => ({ ...j, ...scoreFallback(j, fbProf) })).filter((j) => j.matchScore > 0);
     }
-
-    if (!cvText) {
-      relevantJobs.push({ ...job, convertedSalary, displayCurrency: targetCurrency, rateSource: source, matchScore: null, matchedSkills: [] });
-      continue;
-    }
-
-    const { matchScore, matchedSkills } = scoreLiveJobAgainstCV(job, profile, cvText);
-    if (matchScore === 0 || matchedSkills.length === 0) continue;
-
-    relevantJobs.push({
-      ...job,
-      convertedSalary,
-      displayCurrency: targetCurrency,
-      rateSource: source,
-      matchScore,
-      matchedSkills,
-    });
   }
 
-  let datedJobs = relevantJobs.filter((job) => matchesDateFilter(job, datePosted));
+  let dated = rel.filter((j) => dateOk(j, datePosted));
   let broadenedFrom7d = false;
-  // If fewer than 5 relevant jobs were posted in the last 7 days, include all relevant matches so 1-2 recent posts never hide the rest
-  if (datePosted === "7d" && datedJobs.length < 5 && relevantJobs.length > datedJobs.length) {
-    datedJobs = relevantJobs;
+  if (datePosted === "7d" && dated.length < 5 && rel.length > dated.length) {
+    dated = rel;
     broadenedFrom7d = true;
   }
-
-  if (cvText) datedJobs.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
-
-  const finalResults = await Promise.all(
-    datedJobs.slice(0, 25).map(async (job) => {
-      const resolved = await resolveDirectApplyUrl(job.rawLink, job.title, job.company, job.location);
-      return {
-        ...job,
-        broadenedFrom7d,
-        applyUrl: resolved.url,
-        apply_url: resolved.url,
-        isDirectLink: resolved.isDirect,
-      };
-    })
-  );
-
-  return finalResults;
+  if (cvText) dated.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
+  return dated.slice(0, 25).map((j) => ({ ...j, broadenedFrom7d }));
 }
 
-module.exports = { filter, extractResumeKeywords, buildResumeProfile, scoreLiveJobAgainstCV };
+module.exports = { filter, extractProfileWithAI, evaluateJobsWithAI, buildFallbackProfile, scoreFallback };
