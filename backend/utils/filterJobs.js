@@ -28,7 +28,11 @@ async function askGroq(prompt, key) {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + cleanKey
       },
-      body: JSON.stringify({ keywords, location, page: 1 }),
+      body: JSON.stringify({
+        model: "openai/gpt-oss-120b",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.1
+      }),
       signal: AbortSignal.timeout(15000)
     });
 
@@ -57,7 +61,7 @@ async function extractProfileWithAI(cv, key) {
     "Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:",
     "{",
     '  "primaryRole": "1-sentence description of the candidate exact profession, seniority, and domain",',
-    '  "searchQueries": ["5 short, common 2-to-3 word Malaysian job board search titles (e.g. Service Delivery Manager, Incident Manager, IT Operations Manager) without extra prefixes like Regional or Senior"],',
+    '  "searchQueries": ["5 short, common 2-to-3 word Malaysian job board search titles (e.g. Service Delivery Manager, Incident Manager, IT Operations Manager)"],',
     '  "coreSkills": ["10 specific technical/domain skills, tools, frameworks, or certifications from this resume"]',
     "}",
     "",
@@ -154,7 +158,7 @@ async function queryJooble(keywords, location, key) {
     const r = await fetch("https://jooble.org/api/" + key.trim(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keywords, location, page: 1, }),
+      body: JSON.stringify({ keywords, location, page: 1, datecreatedfrom: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) }),
       signal: AbortSignal.timeout(8000)
     });
     const d = await r.json();
