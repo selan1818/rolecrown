@@ -204,19 +204,19 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
     }));
   }
 
-  const aiProf = await extractProfileWithAI(cvText, gKey);
+  const aiProf = await extractProfileWithAI(cvText, gKey); console.log("DEBUG aiProf:", JSON.stringify(aiProf?.searchQueries || null));
   if (Boolean(aiProf) === false || Boolean(aiProf.searchQueries?.length) === false) return [];
 
   const queries = aiProf.searchQueries.slice(0, 6);
   const raw = dedup((await Promise.all(queries.map((q) => queryJooble(q, loc, jKey)))).flat());
 
-  const salJobs = raw
+  console.log("DEBUG raw Jooble count:", raw.length); const salJobs = raw
     .map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
     .filter((j) => j.convertedSalary === 0 || (j.convertedSalary >= minSalary && j.convertedSalary <= maxSalary));
 
   salJobs.sort((a, b) => (dateOk(b, "7d") ? 1 : 0) - (dateOk(a, "7d") ? 1 : 0));
 
-  const rel = await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey);
+  const rel = await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey); console.log("DEBUG rel AI matched count:", rel.length);
 
   let dated = rel.filter((j) => dateOk(j, datePosted));
   let broadenedFrom7d = false;
