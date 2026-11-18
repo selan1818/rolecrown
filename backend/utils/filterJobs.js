@@ -18,28 +18,36 @@ function convSal(amt, from, to, rates) {
   return Math.round((amt / (rates[(from || "USD").toUpperCase()] || 1)) * (rates[(to || "MYR").toUpperCase()] || 1));
 }
 
-async function askGemini(prompt, key) {
+async function askGroq(prompt, key) {
   if (Boolean(key) === false) return null;
   const cleanKey = key.trim();
-  const models = ["gemini-3.0-flash", "gemini-flash-latest"];
-  for (const model of models) {
-    try {
-      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": cleanKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1 } }),
-        signal: AbortSignal.timeout(20000)
-      });
-      if (r.ok === false) {
-        console.error("Gemini " + model + " HTTP " + r.status + ":", (await r.text()).slice(0, 200));
-        continue;
-      }
-      const d = await r.json();
-      const parts = d?.candidates?.[0]?.content?.parts || [];
-      const txt = parts.map((p) => p.text || "").join("\n").replace(/\`\`\`json|\`\`\`/gi, "").trim();
-      const m = txt.match(/\{[\s\S]*\}/);
-      if (m) return JSON.parse(m[0]);
-    } catch (e) { console.error("Gemini " + model + " error:", e.message); }
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + cleanKey
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-oss-120b",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.1
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (r.ok === false) {
+      console.error("Groq HTTP " + r.status + ":", (await r.text()).slice(0, 200));
+      return null;
+    }
+
+    const d = await r.json();
+    const txt = d?.choices?.[0]?.message?.content || "";
+    const cleanTxt = txt.replace(/```json|```/gi, "").trim();
+    const m = cleanTxt.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
+  } catch (e) {
+    console.error("Groq fetch error:", e.message);
   }
   return null;
 }
@@ -47,24 +55,70 @@ async function askGemini(prompt, key) {
 async function extractProfileWithAI(cv, key) {
   const ck = cv.slice(0, 300) + "|" + cv.length;
   if (aiCache.has(ck)) return aiCache.get(ck);
-  const prompt = "You are an expert executive technical recruiter. Read this candidate resume carefully.\nReturn ONLY a valid JSON object (no markdown) with this exact structure:\n{\"primaryRole\": \"1-sentence description of the candidate exact profession, seniority, and domain\", \"searchQueries\": [\"6 specific job title search strings to find matching jobs on a job board for this candidate\"], \"coreSkills\": [\"10 specific technical/domain skills, tools, frameworks, or certifications from this resume\"]}\n\nResume:\n" + cv.slice(0, 4000);
-  const res = await askGemini(prompt, key);
-  if (res?.searchQueries?.length) { aiCache.set(ck, res); return res; }
+
+  const prompt = [
+    "You are an expert executive technical recruiter. Read this candidate resume carefully.",
+    "Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:",
+    "{",
+    '  "primaryRole": "1-sentence description of the candidate exact profession, seniority, and domain",',
+    '  "searchQueries": ["6 specific job title search strings to find matching jobs on a job board for this candidate"],',
+    '  "coreSkills": ["10 specific technical/domain skills, tools, frameworks, or certifications from this resume"]',
+    "}",
+    "",
+    "Resume:",
+    cv.slice(0, 4000)
+  ].join("\n");
+
+  const res = await askGroq(prompt, key);
+  if (res?.searchQueries?.length) {
+    aiCache.set(ck, res);
+    return res;
+  }
   return null;
 }
 
 async function evaluateJobsWithAI(cv, aiProf, jobs, key) {
   if ((jobs?.length || 0) === 0) return [];
-  const batch = jobs.slice(0, 40);
-  const jobList = batch.map((j, index) => ({ index, title: j.title, company: j.company, snippet: (j.snippet || "").slice(0, 180) }));
-  const prompt = "You are an expert recruiter matching a candidate to live job listings.\nCandidate Profile: " + aiProf.primaryRole + "\nCandidate Core Skills: " + (aiProf.coreSkills || []).join(", ") + "\nCandidate Resume Excerpt: " + cv.slice(0, 1500) + "\nTask:\n1. SELECT ONLY jobs that genuinely belong to the candidate profession and career track.\n2. STRICTLY REJECT jobs from unrelated professions (e.g. if candidate is in IT Service Management or AML Compliance, reject Procurement, Sourcing, Financial Accountant, Bookkeeping, Marketing, Sales, HR, Clinical, or Factory roles).\n3. For each selected job, provide matchScore (70 to 98) and 2 to 5 specific domain matchedSkills (never generic words like SENIOR or FINANCIAL alone).\nReturn ONLY valid JSON: {\"matches\": [{\"index\": 0, \"matchScore\": 88, \"matchedSkills\": [\"SKILL 1\", \"SKILL 2\"]}]}\nJob Listings:\n" + JSON.stringify(jobList);
-  const res = await askGemini(prompt, key);
-  if (Array.isArray(res?.matches) === false) return [];
-  return res.matches.filter((m) => Boolean(batch[m.index])).map((m) => ({
-    ...batch[m.index],
-    matchScore: Math.min(98, Math.max(70, Number(m.matchScore) || 80)),
-    matchedSkills: (Array.isArray(m.matchedSkills) && m.matchedSkills.length ? m.matchedSkills : (aiProf.coreSkills || []).slice(0, 4)).slice(0, 5).map((s) => String(s).toUpperCase())
+  const batch = jobs.slice(0, 35);
+  const jobList = batch.map((j, index) => ({
+    index,
+    title: j.title,
+    company: j.company,
+    snippet: (j.snippet || "").slice(0, 180)
   }));
+
+  const prompt = [
+    "You are an expert recruiter matching a candidate to live job listings.",
+    "",
+    "Candidate Profile: " + aiProf.primaryRole,
+    "Candidate Core Skills: " + (aiProf.coreSkills || []).join(", "),
+    "Candidate Resume Excerpt: " + cv.slice(0, 1500),
+    "",
+    "Task:",
+    "Evaluate the following job listings like a human hiring manager.",
+    "1. SELECT ONLY jobs that genuinely belong to the candidate profession and career track.",
+    "2. STRICTLY REJECT jobs from unrelated professions (for example, if the candidate is in IT Service Management or AML Compliance, reject Procurement, Sourcing, Financial Accountant, Bookkeeping, Marketing, Sales, HR, Clinical, or Factory roles).",
+    "3. For each selected job, provide a realistic matchScore (70 to 98) and 2 to 5 specific domain matchedSkills (never use generic words like SENIOR or FINANCIAL alone as a skill badge).",
+    "",
+    "Return ONLY a valid JSON object (no markdown) in this exact format:",
+    '{ "matches": [ { "index": 0, "matchScore": 88, "matchedSkills": ["SKILL 1", "SKILL 2", "SKILL 3"] } ] }',
+    "",
+    "Job Listings:",
+    JSON.stringify(jobList)
+  ].join("\n");
+
+  const res = await askGroq(prompt, key);
+  if (Array.isArray(res?.matches) === false) return [];
+
+  return res.matches
+    .filter((m) => Boolean(batch[m.index]))
+    .map((m) => ({
+      ...batch[m.index],
+      matchScore: Math.min(98, Math.max(70, Number(m.matchScore) || 80)),
+      matchedSkills: (Array.isArray(m.matchedSkills) && m.matchedSkills.length ? m.matchedSkills : (aiProf.coreSkills || []).slice(0, 4))
+        .slice(0, 5)
+        .map((s) => String(s).toUpperCase())
+    }));
 }
 
 function parseSal(s, loc) {
@@ -135,23 +189,42 @@ function dateOk(j, dp) {
 async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "", currency = "MYR", datePosted = "7d") {
   const { rates, source } = await getRates();
   const cvText = (cv || "").trim(), cur = (currency || "MYR").toUpperCase(), loc = (location || "").trim() || "Malaysia";
-  const gKey = process.env.GEMINI_API_KEY, jKey = process.env.JOOBLE_API_KEY;
+  const gKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY, jKey = process.env.JOOBLE_API_KEY;
   if (Boolean(jKey) === false) return [];
+
   if (Boolean(cvText) === false) {
     const raw = await queryJooble("Manager", loc, jKey);
-    return raw.slice(0, 25).map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source, matchScore: null, matchedSkills: [] }));
+    return raw.slice(0, 25).map((j) => ({
+      ...j,
+      convertedSalary: convSal(j.salary, j.currency, cur, rates),
+      displayCurrency: cur,
+      rateSource: source,
+      matchScore: null,
+      matchedSkills: []
+    }));
   }
+
   const aiProf = await extractProfileWithAI(cvText, gKey);
   if (Boolean(aiProf) === false || Boolean(aiProf.searchQueries?.length) === false) return [];
+
   const queries = aiProf.searchQueries.slice(0, 6);
   const raw = dedup((await Promise.all(queries.map((q) => queryJooble(q, loc, jKey)))).flat());
-  const salJobs = raw.map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
+
+  const salJobs = raw
+    .map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
     .filter((j) => j.convertedSalary === 0 || (j.convertedSalary >= minSalary && j.convertedSalary <= maxSalary));
+
   salJobs.sort((a, b) => (dateOk(b, "7d") ? 1 : 0) - (dateOk(a, "7d") ? 1 : 0));
+
   const rel = await evaluateJobsWithAI(cvText, aiProf, salJobs, gKey);
+
   let dated = rel.filter((j) => dateOk(j, datePosted));
   let broadenedFrom7d = false;
-  if (datePosted === "7d" && dated.length < 5 && rel.length > dated.length) { dated = rel; broadenedFrom7d = true; }
+  if (datePosted === "7d" && dated.length < 5 && rel.length > dated.length) {
+    dated = rel;
+    broadenedFrom7d = true;
+  }
+
   dated.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
   return dated.slice(0, 25).map((j) => ({ ...j, broadenedFrom7d }));
 }
