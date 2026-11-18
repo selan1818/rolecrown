@@ -28,11 +28,7 @@ async function askGroq(prompt, key) {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + cleanKey
       },
-      body: JSON.stringify({
-        model: "openai/gpt-oss-120b",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1
-      }),
+      body: JSON.stringify({ keywords, location, page: 1 }),
       signal: AbortSignal.timeout(15000)
     });
 
@@ -208,21 +204,7 @@ async function filter(location = "", minSalary = 0, maxSalary = 10000000, cv = "
   if (Boolean(aiProf) === false || Boolean(aiProf.searchQueries?.length) === false) return [];
 
   const queries = aiProf.searchQueries.slice(0, 6);
-  const azFn = async (q) => { const azId = process.env.ADZUNA_APP_ID, azKey = process.env.ADZUNA_APP_KEY;
-    if (!azId || !azKey) return [];
-    const u = new URL("https://adzuna.com");
-    u.search = new URLSearchParams({ app_id: azId.trim(), app_key: azKey.trim(), results_per_page: "15", what: q, max_days_old: "7" });
-    const res = await fetch(u); console.log("DEBUG Adzuna status:", res.status, "query:", q); const r = res.ok ? await res.json() : { results: [] };
-    return (r.results || []).map((it, i) => ({
-      id: "az-" + (it.id || i), title: it.title || "Open Position", company: it.company?.display_name || "Verified Employer",
-      location: it.location?.display_name || loc, salary: Math.round((Number(it.salary_min)||0)/12), rawSalaryText: "", currency: "MYR",
-      skills: (it.description || "").slice(0, 180), snippet: (it.description || "").replace(/<[^>]*>/g, " ").trim(),
-      rawLink: it.redirect_url || "#", applyUrl: it.redirect_url || "#", apply_url: it.redirect_url || "#",
-      linkedinSearchUrl: "https://linkedin.com" + encodeURIComponent((it.title||"") + " " + (it.company?.display_name||"")) + "&location=" + encodeURIComponent(loc) + "&f_TPR=r604800",
-      source: "Adzuna MY", updatedAt: it.created || null, postedAgo: "Recent"
-    }));
-  };
-  const raw = dedup((await Promise.all(queries.flatMap((q) => [queryJooble(q, loc, jKey), azFn(q)]))).flat());
+  const raw = dedup((await Promise.all(queries.map((q) => queryJooble(q, loc, jKey)))).flat());
 
   console.log("DEBUG raw Jooble count:", raw.length); const salJobs = raw
     .map((j) => ({ ...j, convertedSalary: convSal(j.salary, j.currency, cur, rates), displayCurrency: cur, rateSource: source }))
